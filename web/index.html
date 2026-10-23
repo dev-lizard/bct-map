@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Broward Transit 3D</title>
+    <meta name="description" content="A real-time 3D map of Broward County Transit buses." />
+    <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <link href="./style.css" rel="stylesheet" />
+    <!-- MapLibre GL draws the OpenFreeMap basemap; three.js draws the buses in a MapLibre custom layer.
+         Neither needs an API key. -->
+    <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+    <script type="importmap">
+      { "imports": { "three": "https://unpkg.com/three@0.184.0/build/three.module.js" } }
+    </script>
+  </head>
+  <body>
+    <div id="map"></div>
+    <!-- Filled by web/sidebar.js once the timetable has loaded. -->
+    <nav id="rail" class="panel rail" aria-label="Panels"></nav>
+    <div class="left-column">
+      <div id="status" class="panel">
+        <div class="header-line">
+          <div class="clock"><span id="date"></span> <strong id="clock"></strong></div>
+          <div id="weather" class="weather" hidden></div>
+        </div>
+        <div id="status-text" role="status">Loading…</div>
+        <div id="radar-note" class="radar-note" hidden></div>
+        <div id="filter-note" class="filter-note" hidden></div>
+      </div>
+      <section id="sidebar" class="panel sidebar" aria-label="Routes, search, alerts and settings" hidden></section>
+    </div>
+    <aside id="panel" class="panel detail" aria-label="Stop or trip details" hidden></aside>
+    <div id="toast" class="panel toast" role="status" hidden></div>
+    <script src="./runtime-config.js"></script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

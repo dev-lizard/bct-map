@@ -1,0 +1,26 @@
+{
+  "name": "broward-transit-3d",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time 3D map of Broward County Transit buses, modelled on aklcommute.nz (ptauckland3d.com).",
+  "type": "module",
+  "scripts": {
+    "build:static": "node scripts/build-static.mjs",
+    "build:site": "node scripts/build-site.mjs",
+    "build:site:local": "node -e \"process.env.API_URL='http://127.0.0.1:8788'; import('./scripts/build-site.mjs')\"",
+    "dev": "node server/index.mjs",
+    "dev:worker": "wrangler dev --port 8788 --test-scheduled",
+    "check:feeds": "node scripts/check-feeds.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "gtfs-realtime-bindings": "^1.1.1",
+    "wrangler": "^4.152.0"
+  }
+}

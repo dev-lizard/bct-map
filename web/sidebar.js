@@ -1,0 +1,375 @@
+// The left-hand rail and the panels it opens: routes (with the route filter), search, alerts and
+// settings. It reaches the map only through the callbacks, so it knows nothing of MapLibre or three.js.
+import { getApiJson } from './api.js';
+import { el, formatDate, formatTime, icon, routeBadge } from './dom.js';
+
+const PANELS = [
+  { name: 'routes', label: 'Routes' },
+  { name: 'search', label: 'Search' },
+  { name: 'alerts', label: 'Alerts' },
+  { name: 'reliability', label: 'Reliability' },
+  { name: 'settings', label: 'Settings' },
+];
+// Fewer timepoint departures than this and a percentage is more noise than signal.
+const FEW_SAMPLES = 20;
+const MAX_BADGES = 6;
+
+// routes: [{ routeId, routeShortName, routeLongName, routeColor, routeTextColor }], in display order.
+// search(query, limit): see search.js. settings: the live settings object (read only here).
+export function createSidebar(railEl, panelEl, { routes, search, settings, onFilter, onShowRoute, onStop, onTrip, onSettings, onOpen }) {
+  const routesById = new Map(routes.map(r => [r.routeId, r]));
+  let openName = null;
+  let filter = null; // Set of route ids shown, or null for all
+  let counts = new Map(); // route id -> buses running now
+  let alerts = [];
+
+  const titleEl = el('h2', {});
+  const closeButton = el('button', { type: 'button', className: 'icon-button close', title: 'Close', ariaLabel: 'Close panel' }, '×');
+  const bodyEl = el('div', { className: 'detail-body' });
+  panelEl.append(el('div', { className: 'detail-header' }, el('div', { className: 'detail-title' }, titleEl), closeButton), bodyEl);
+  closeButton.addEventListener('click', () => close());
+  panelEl.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation(); // don't also close the detail panel
+    close();
+  });
+
+  const buttons = new Map();
+  const alertCount = el('span', { className: 'rail-count', hidden: true });
+  for (const { name, label } of PANELS) {
+    const button = el('button', { type: 'button', className: 'rail-button', title: label, ariaLabel: label }, icon(name), name === 'alerts' && alertCount);
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('click', () => (openName === name ? close() : show(name)));
+    buttons.set(name, button);
+    railEl.append(button);
+  }
+
+  const sections = {};
+  const builders = { routes: buildRoutes, search: buildSearch, alerts: buildAlerts, reliability: buildReliability, settings: buildSettings };
+  const section = name => (sections[name] ??= builders[name]());
+
+  function show(name) {
+    openName = name;
+    panelEl.hidden = false;
+    for (const [n, b] of buttons) b.setAttribute('aria-pressed', String(n === name));
+    titleEl.textContent = PANELS.find(p => p.name === name).label;
+    const s = section(name);
+    bodyEl.replaceChildren(s.node);
+    s.sync?.();
+    onOpen(name);
+    s.focus?.();
+  }
+
+  function close() {
+    if (!openName) return;
+    openName = null;
+    panelEl.hidden = true;
+    for (const b of buttons.values()) b.setAttribute('aria-pressed', 'false');
+    onOpen(null);
+  }
+
+  // ---- Routes --------------------------------------------------------------------------------
+
+  function buildRoutes() {
+    const query = el('input', { type: 'search', className: 'text-input', placeholder: 'Filter routes', ariaLabel: 'Filter the route list' });
+    const showAll = el('button', { type: 'button', className: 'small-button' }, 'Show all');
+    const summary = el('p', { className: 'panel-note' });
+    const rows = routes.map(r => {
+      const box = el('input', { type: 'checkbox', ariaLabel: `Show route ${r.routeShortName}` });
+      box.addEventListener('change', () => toggleRoute(r.routeId, box.checked));
+      const name = el('button', { type: 'button', className: 'route-name', title: `Show only route ${r.routeShortName} and zoom to it` },
+        routeBadge(r), el('span', { className: 'headsign' }, r.routeLongName));
+      name.addEventListener('click', () => onShowRoute(r.routeId));
+      const count = el('span', { className: 'count-text' });
+      const row = el('div', { className: 'route-row' }, box, name, count);
+      return { route: r, row, box, count, text: `${r.routeShortName} ${r.routeLongName}`.toLowerCase() };
+    });
+    query.addEventListener('input', () => {
+      const q = query.value.trim().toLowerCase();
+      for (const x of rows) x.row.hidden = Boolean(q) && !x.text.includes(q);
+    });
+    showAll.addEventListener('click', () => onFilter(null));
+    return {
+      node: el('div', {}, el('div', { className: 'toolbar' }, query, showAll), summary, el('div', {}, ...rows.map(x => x.row))),
+      sync() {
+        const running = routes.filter(r => counts.get(r.routeId)).length;
+        summary.textContent = `${running} of ${routes.length} routes have buses running.` +
+          (filter ? ` Showing ${filter.size} on the map.` : ' Untick a route to hide it, or pick one to show only that route.');
+        for (const x of rows) {
+          x.box.checked = !filter || filter.has(x.route.routeId);
+          const n = counts.get(x.route.routeId) ?? 0;
+          x.count.textContent = n ? `${n} ${n === 1 ? 'bus' : 'buses'}` : '';
+        }
+        showAll.disabled = !filter;
+      },
+    };
+  }
+
+  function toggleRoute(routeId, shown) {
+    const next = new Set(filter ?? routes.map(r => r.routeId));
+    if (shown) next.add(routeId);
+    else next.delete(routeId);
+    onFilter(next.size === routes.length ? null : [...next]);
+  }
+
+  // ---- Search --------------------------------------------------------------------------------
+
+  function buildSearch() {
+    const input = el('input', { type: 'search', className: 'text-input', placeholder: 'Stop name, stop number or route', ariaLabel: 'Search stops and routes' });
+    const results = el('div', {});
+    let hits = [];
+    const choose = hit => (hit.kind === 'route' ? onShowRoute(hit.item.routeId) : onStop(hit.item.id));
+    function render() {
+      hits = search(input.value, 25);
+      if (!input.value.trim()) {
+        results.replaceChildren(el('p', { className: 'panel-note' }, 'Try a stop name like "NW 4th St", a stop number like 0210, or a route number like 22.'));
+        return;
+      }
+      if (!hits.length) {
+        results.replaceChildren(el('p', { className: 'panel-note' }, 'No stops or routes match.'));
+        return;
+      }
+      results.replaceChildren(...hits.map(hit => {
+        const { item } = hit;
+        const row = hit.kind === 'route'
+          ? el('button', { type: 'button', className: 'row result' },
+            routeBadge(item), el('div', { className: 'what' }, el('div', { className: 'headsign' }, item.routeLongName), el('div', { className: 'status' }, 'Route')))
+          : el('button', { type: 'button', className: 'row result' },
+            el('span', { className: 'stop-glyph', ariaHidden: 'true' }),
+            el('div', { className: 'what' }, el('div', { className: 'headsign' }, item.name), el('div', { className: 'status badges' }, `Stop ${item.code}`, ...badgesFor(item.routes))));
+        row.addEventListener('click', () => choose(hit));
+        return row;
+      }));
+    }
+    input.addEventListener('input', render);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && hits[0]) choose(hits[0]);
+    });
+    render();
+    return { node: el('div', {}, el('div', { className: 'toolbar' }, input), results), focus: () => input.focus() };
+  }
+
+  function badgesFor(routeIds = []) {
+    const known = routeIds.map(id => routesById.get(id)).filter(Boolean);
+    const badges = known.slice(0, MAX_BADGES).map(routeBadge);
+    if (known.length > MAX_BADGES) badges.push(el('span', {}, `+${known.length - MAX_BADGES}`));
+    return badges;
+  }
+
+  // ---- Alerts --------------------------------------------------------------------------------
+
+  function buildAlerts() {
+    const note = el('p', { className: 'panel-note' });
+    const list = el('div', {});
+    return {
+      node: el('div', {}, note, list),
+      sync() {
+        const shown = filter ? alerts.filter(a => !a.routes.length || a.routes.some(r => filter.has(r.routeId))) : alerts;
+        note.textContent = !alerts.length
+          ? 'No service alerts right now.'
+          : filter && shown.length !== alerts.length
+            ? `${shown.length} of ${alerts.length} alerts affect the routes you're showing.`
+            : `${alerts.length} active ${alerts.length === 1 ? 'alert' : 'alerts'} from Broward County Transit.`;
+        list.replaceChildren(...shown.map(alertCard));
+      },
+    };
+  }
+
+  function alertCard(a) {
+    const end = a.activePeriods.map(p => p.end).filter(Boolean).sort((x, y) => x - y).at(-1);
+    const trips = a.trips.map(t => {
+      const b = el('button', { type: 'button', className: 'link-row' }, routeBadge(t), ' ', t.headsign ?? t.tripId);
+      b.addEventListener('click', () => onTrip(t.tripId));
+      return b;
+    });
+    const stops = a.stops.map(s => {
+      const b = el('button', { type: 'button', className: 'link-row' }, s.stopName ?? s.stopId);
+      b.addEventListener('click', () => onStop(s.stopId));
+      return b;
+    });
+    return el('article', { className: 'alert' },
+      el('h3', {}, a.header ?? 'Service alert'),
+      a.description && a.description !== a.header && el('p', {}, a.description),
+      !trips.length && a.routes.length > 0 && el('div', { className: 'badges' }, ...a.routes.map(routeBadge)),
+      ...trips,
+      stops.length > 0 && el('details', {}, el('summary', {}, `${stops.length} ${stops.length === 1 ? 'stop' : 'stops'} affected`), ...stops),
+      end && el('p', { className: 'status' }, `Until ${formatTime(end)}`),
+    );
+  }
+
+  // ---- Reliability ---------------------------------------------------------------------------
+
+  // On-time performance from the API's log of timepoint departures: every route, or one route by
+  // hour of day. Reloaded each time the panel opens. The API knows route ids only; names and
+  // colours come from the timetable already loaded here.
+  function buildReliability() {
+    const node = el('div', {});
+    let routeId = null; // null: all routes
+    let request = 0;
+
+    async function load() {
+      const ticket = ++request;
+      node.replaceChildren(el('p', { className: 'panel-note' }, 'Loading…'));
+      try {
+        const data = await getApiJson(routeId ? `/api/reliability?route=${encodeURIComponent(routeId)}` : '/api/reliability');
+        if (ticket !== request) return;
+        const route = id => routesById.get(id) ?? { routeId: id, routeShortName: id, routeColor: '#888888', routeTextColor: '#FFFFFF' };
+        if (routeId) data.route = route(routeId);
+        else data.routes = data.routes.map(r => ({ ...route(r.routeId), ...r }));
+        node.replaceChildren(...(routeId ? routeView(data) : allRoutesView(data)));
+      } catch (err) {
+        if (ticket === request) node.replaceChildren(el('p', { className: 'empty' }, `Couldn't load reliability: ${err.message}`));
+      }
+    }
+
+    function allRoutesView(data) {
+      if (!data.samples) {
+        return [el('p', { className: 'panel-note' }, 'No departures recorded yet. Each timepoint a bus passes is logged; check back in a few minutes.')];
+      }
+      const rows = data.routes.map(r => {
+        const row = el('button', { type: 'button', className: 'rel-row' },
+          routeBadge(r), stackedBar(r), el('span', { className: 'rel-pct' }, pctText(r)));
+        row.setAttribute('aria-label', `Route ${r.routeShortName}: ${summaryText(r)}. Show by hour.`);
+        row.addEventListener('click', () => {
+          routeId = r.routeId;
+          load();
+        });
+        return row;
+      });
+      return [
+        intro(data),
+        el('div', { className: 'rel-row rel-total' }, el('strong', {}, 'All'), stackedBar(data), el('strong', { className: 'rel-pct' }, pctText(data))),
+        legend(),
+        ...rows,
+      ];
+    }
+
+    function routeView(data) {
+      const back = el('button', { type: 'button', className: 'link' }, '‹ All routes');
+      back.addEventListener('click', () => {
+        routeId = null;
+        load();
+      });
+      const head = el('div', { className: 'rel-head' }, back,
+        el('div', { className: 'rel-title' }, routeBadge(data.route), ' ', routesById.get(data.route.routeId)?.routeLongName ?? ''));
+      if (!data.samples) return [head, el('p', { className: 'panel-note' }, 'No departures recorded for this route yet.')];
+      const hours = data.byHour.map(h => {
+        const row = el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, hourText(h.hour)), stackedBar(h), el('span', { className: 'rel-pct' }, pctText(h)));
+        row.setAttribute('aria-label', `${hourText(h.hour)}: ${summaryText(h)}`);
+        return row;
+      });
+      return [
+        head,
+        intro(data),
+        el('div', { className: 'rel-row rel-total' }, el('strong', {}, 'All'), stackedBar(data), el('strong', { className: 'rel-pct' }, pctText(data))),
+        legend(),
+        el('p', { className: 'panel-note rel-sub' }, 'By hour of departure'),
+        ...hours,
+      ];
+    }
+
+    function intro(data) {
+      let since = '';
+      if (data.collectingSince) {
+        const started = new Date(data.collectingSince * 1000);
+        const day = formatDate(started) === formatDate(new Date()) ? 'today' : formatDate(started);
+        since = ` Recording since ${formatTime(data.collectingSince)} ${day}.`;
+      }
+      return el('p', { className: 'panel-note' },
+        `On time means no more than 1 minute early or 5 minutes late at a timepoint. Last ${data.windowDays} days, ${data.samples.toLocaleString('en-US')} ${data.samples === 1 ? 'departure' : 'departures'}.${since}`);
+    }
+
+    return { node, sync: load };
+  }
+
+  // Early, on-time and late shares as one bar, in that order. Colour is backed by the legend, the
+  // percentage beside the bar and each segment's tooltip.
+  function stackedBar(s) {
+    const bar = el('div', { className: 'rel-bar', ariaHidden: 'true' });
+    for (const [key, label] of [['early', 'Early'], ['onTime', 'On time'], ['late', 'Late']]) {
+      const pct = s[`${key}Pct`];
+      if (!pct) continue;
+      const seg = el('span', { className: `rel-seg rel-${key}`, title: `${label}: ${pct}% of ${s.samples}` });
+      seg.style.flexGrow = String(pct);
+      bar.append(seg);
+    }
+    return bar;
+  }
+
+  function legend() {
+    return el('div', { className: 'rel-legend' },
+      ...[['early', 'Early'], ['onTime', 'On time'], ['late', 'Late']].map(([key, label]) =>
+        el('span', {}, el('span', { className: `rel-swatch rel-${key}` }), label)),
+      el('span', { className: 'muted' }, `* under ${FEW_SAMPLES} departures`));
+  }
+
+  const pctText = s => (s.samples < FEW_SAMPLES ? `${s.onTimePct}%*` : `${s.onTimePct}%`);
+  const summaryText = s => `${s.onTimePct}% on time, ${s.earlyPct}% early, ${s.latePct}% late, from ${s.samples} departures`;
+  const hourText = h => (settings.timeFormat === '24h' ? `${String(h).padStart(2, '0')}:00` : `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`);
+
+  // ---- Settings ------------------------------------------------------------------------------
+
+  function buildSettings() {
+    const choices = (legend, key, options, note) => {
+      const group = el('fieldset', { className: 'setting' }, el('legend', {}, legend));
+      for (const [value, label] of options) {
+        const input = el('input', { type: 'radio', name: `setting-${key}`, value, checked: settings[key] === value });
+        input.addEventListener('change', () => input.checked && onSettings({ [key]: value }));
+        group.append(el('label', { className: 'choice' }, input, label));
+      }
+      if (note) group.append(el('p', { className: 'status' }, note));
+      return group;
+    };
+    const toggle = (label, key) => {
+      const input = el('input', { type: 'checkbox', checked: settings[key] });
+      input.addEventListener('change', () => onSettings({ [key]: input.checked }));
+      return el('label', { className: 'setting choice' }, input, label);
+    };
+    return {
+      node: el('div', { className: 'settings' },
+        choices('Map theme', 'theme', [['auto', 'Automatic: day or night in Broward'], ['day', 'Day'], ['night', 'Night']], 'Changing the theme reloads the map.'),
+        choices('Buses', 'vehicles', [['auto', 'Automatic: 3D, or 2D if the map runs slowly'], ['3d', '3D'], ['2d', '2D (lighter on older devices)']]),
+        toggle('3D buildings', 'buildings'),
+        toggle('Rain radar', 'radar'),
+        choices('Stops', 'stops', [['active-routes', 'On routes with a bus running'], ['all', 'All stops'], ['none', 'Hidden']]),
+        toggle('Stop names', 'stopNames'),
+        choices('Times', 'timeFormat', [['12h', '12-hour'], ['24h', '24-hour']]),
+        el('div', { className: 'about' },
+          el('h3', {}, 'About'),
+          el('p', {}, 'Live data from Broward County Transit, refreshed every 10 seconds. Buses are drawn about 30 seconds behind the feed so they can move smoothly along their streets.'),
+          el('p', {}, 'Modelled on aklcommute.nz. Basemap: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors.')),
+      ),
+    };
+  }
+
+  return {
+    show,
+    close,
+    get isOpen() {
+      return openName != null;
+    },
+    setFilter(next) {
+      filter = next;
+      sections.routes?.sync();
+      sections.alerts?.sync();
+    },
+    // Re-renders text that depends on settings, e.g. after the 12/24-hour setting changes or the
+    // buses switch to 2D on their own.
+    refresh() {
+      sections.alerts?.sync();
+      if (sections.settings) {
+        sections.settings = buildSettings();
+        if (openName === 'settings') bodyEl.replaceChildren(sections.settings.node);
+      }
+    },
+    // New feed data: live bus counts per route and the current alerts.
+    update(next) {
+      counts = next.counts;
+      alerts = next.alerts;
+      alertCount.hidden = alerts.length === 0;
+      alertCount.textContent = String(alerts.length);
+      sections.routes?.sync();
+      sections.alerts?.sync();
+    },
+  };
+}

@@ -1,0 +1,44 @@
+# Deploys the Cloudflare Worker (the API) when its code changes, or on demand.
+# Needs repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (docs/DEPLOY.md).
+# The Worker reads the timetable from this repository's Pages site; set the variable PAGES_URL
+# only if the site isn't at https://<owner>.github.io/<repo> (a custom domain, say).
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - worker/**
+      - server/**
+      - web/gtfs-rt.js
+      - web/gtfs-util.js
+      - web/live.js
+      - web/schedule.js
+      - wrangler.toml
+      - package-lock.json
+      - .github/workflows/worker.yml
+  workflow_dispatch:
+
+concurrency:
+  group: worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Deploy
+        run: npx wrangler deploy --var "PAGES_URL:${PAGES_URL:-https://${OWNER}.github.io/${REPO}}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_URL: ${{ vars.PAGES_URL }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}

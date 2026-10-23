@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { ReliabilityLog } from '../server/reliability.mjs';
+import { serviceDayStart } from '../web/gtfs-util.js';
+
+const TZ = 'America/New_York';
+const H = 3600;
+const day = serviceDayStart('20261022', TZ);
+// Timepoints (4th element 1) at sequences 1, 3 and 5; 2 and 4 are ordinary stops.
+const trips = {
+  T1: { r: 'R1', s: [[1, 'A', 8 * H, 1], [2, 'B', 8 * H + 300], [3, 'C', 8 * H + 600, 1], [4, 'D', 8 * H + 900], [5, 'E', 8 * H + 1200, 1]] },
+  T2: { r: 'R2', s: [[1, 'A', 9 * H, 1], [2, 'B', 9 * H + 600, 1]] },
+};
+const live = (tripId, nextSeq, times, extra = {}) => ({
+  tripId,
+  startDate: '20261022',
+  canceled: false,
+  nextStop: { seq: nextSeq },
+  bySeq: new Map(Object.entries(times).map(([seq, t]) => [Number(seq), t])),
+  ...extra,
+});
+
+test('records each timepoint the bus has passed, once', () => {
+  const log = new ReliabilityLog({ timezone: TZ });
+  const feedTs = day + 8 * H + 800;
+  // Bus is heading for stop 4: timepoints 1 and 3 are behind it (2 min late at 1, 1 min early at 3).
+  const t1 = live('T1', 4, { 1: day + 8 * H + 120, 2: day + 8 * H + 400, 3: day + 8 * H + 540, 5: day + 8 * H + 1250 });
+  assert.equal(log.observe([t1], trips, feedTs), 2);
+  assert.deepEqual(log.samples.map(s => [s[1], s[2]]), [['R1', 120], ['R1', -60]]);
+  assert.equal(log.observe([t1], trips, feedTs + 10), 0); // already recorded
+});
+
+test('skips canceled trips, times still in the future, and implausible delays', () => {
+  const log = new ReliabilityLog({ timezone: TZ });
+  const feedTs = day + 8 * H + 800;
+  assert.equal(log.observe([live('T1', 4, { 1: day + 8 * H }, { canceled: true })], trips, feedTs), 0);
+  assert.equal(log.observe([live('T1', 4, { 1: feedTs + 60 })], trips, feedTs), 0); // not passed yet
+  assert.equal(log.observe([live('T2', 2, { 1: day + 9 * H + 5 * H })], trips, day + 15 * H), 0); // 5 h "late"
+});
+
+test('summary: on time is 1 min early to 5 min late; by route and by hour', () => {
+  const log = new ReliabilityLog({ timezone: TZ });
+  // [time, route, delay, hour]
+  log.samples = [
+    [day + 8 * H, 'R1', -120, 8], // early
+    [day + 8 * H, 'R1', 0, 8], // on time
+    [day + 9 * H, 'R1', 299, 9], // on time
+    [day + 9 * H, 'R1', 400, 9], // late
+    [day + 9 * H, 'R2', 30, 9], // on time
+  ];
+  const nowS = day + 10 * H;
+  const all = log.summary({ nowS });
+  assert.equal(all.samples, 5);
+  assert.equal(all.onTimePct, 60);
+  assert.deepEqual(all.routes.map(r => [r.routeId, r.onTimePct, r.earlyPct, r.latePct]), [['R2', 100, 0, 0], ['R1', 50, 25, 25]]);
+
+  const r1 = log.summary({ nowS, routeId: 'R1' });
+  assert.equal(r1.meanDelayS, 145); // (-120 + 0 + 299 + 400) / 4
+  assert.deepEqual(r1.byHour.map(h => [h.hour, h.samples, h.onTimePct]), [[8, 2, 50], [9, 2, 50]]);
+
+  assert.equal(log.summary({ nowS: nowS + 8 * 86400, days: 7 }).samples, 0); // outside the window
+});
+
+test('departures persist to disk and are not recorded twice after a restart', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bt3d-reliability-'));
+  try {
+    const feedTs = day + 8 * H + 800;
+    const t1 = live('T1', 4, { 1: day + 8 * H + 120, 3: day + 8 * H + 540 });
+    const first = new ReliabilityLog({ dir, timezone: TZ });
+    await first.load(feedTs);
+    first.observe([t1], trips, feedTs);
+    await first.flush();
+    const lines = (await fs.readFile(path.join(dir, '20261022.jsonl'), 'utf8')).trim().split('\n');
+    assert.equal(lines.length, 2);
+
+    const second = new ReliabilityLog({ dir, timezone: TZ });
+    await second.load(feedTs);
+    assert.equal(second.samples.length, 2);
+    assert.equal(second.observe([t1], trips, feedTs), 0); // remembered from the file
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

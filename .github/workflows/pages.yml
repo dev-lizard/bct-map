@@ -1,0 +1,51 @@
+# Builds the timetable from BCT's GTFS and publishes the site to GitHub Pages: on every push to
+# main, every night (so the two-week timetable window keeps moving), and on demand.
+# Needs: Settings > Pages > Source = "GitHub Actions", and the repository variable WORKER_URL
+# (Settings > Secrets and variables > Actions > Variables), e.g. https://broward-transit-3d.<you>.workers.dev
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '30 8 * * *' # 08:30 UTC: 3:30 or 4:30 AM in Broward
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:static
+      - run: node scripts/build-site.mjs
+        env:
+          API_URL: ${{ vars.WORKER_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
