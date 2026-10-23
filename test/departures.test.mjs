@@ -173,3 +173,17 @@ test('alerts name their trips, routes and stops from the timetable', () => {
   assert.deepEqual(alert.stops, [{ stopId: 'A', stopName: 'Stop A' }, { stopId: 'B', stopName: 'Stop B' }]);
   assert.deepEqual(alert.activePeriods, [{ start: nowS, end: nowS + 3600 }]);
 });
+
+test('a trip update naming a stop by its code still finds the timetable stop', () => {
+  const feed = makeFeed();
+  const nowS = thursday + 7 * H + 58 * 60;
+  // Stop B's code is 1001; BCT sometimes sends that instead of the stop id.
+  feed.ingest({
+    tripUpdates: feedOf(nowS, 'tripUpdate', [update('T1', '20261022', [{ stopSequence: 2, stopId: '1001', arrival: { time: thursday + 8 * H + 700 } }])]),
+    vehiclePositions: feedOf(nowS, 'vehicle', [busOn('T1', nowS)]),
+  });
+  const bus = feed.snapshot.vehiclePositions[0];
+  assert.equal(bus.nextStop.stopId, 'B');
+  assert.equal(bus.nextStop.stopName, 'Stop B');
+  assert.ok(Math.abs(bus.nextStop.lat - 26.11) < 1e-9);
+});

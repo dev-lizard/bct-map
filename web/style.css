@@ -40,7 +40,13 @@ body {
   margin: 0;
   height: 100%;
   background: #1c1c1e;
-  font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: Overpass, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* MapLibre's controls, attribution and popups use the app font too. (The map's own labels are
+   drawn from OpenFreeMap's glyphs, which only come in Noto Sans.) */
+.maplibregl-map {
+  font-family: inherit;
 }
 
 #map {
@@ -541,10 +547,10 @@ summary:focus-visible {
   background: var(--row-hover);
 }
 
+/* Headsigns and stop names wrap rather than being cut off: BCT's names are long
+   ("Northwest 7th Avenue/Northwest 4th Street (Family Health Center)"). */
 .headsign {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .status {
@@ -944,4 +950,304 @@ button.rel-row:hover {
 .rel-sub {
   padding-bottom: 2px;
   font-weight: 600;
+}
+
+/* ---- Buses and Analytics panels -------------------------------------------------------------- */
+
+/* Tables need more room: on large screens the sidebar column widens while they're open. */
+@media (min-width: 1100px) {
+  .left-column.wide {
+    width: 600px;
+  }
+}
+
+.panel-tools {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px 0;
+}
+
+.panel-tools .small-button {
+  flex: none;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Scrolls sideways in the narrow column rather than squeezing words apart. */
+.bus-table {
+  width: 100%;
+  min-width: 540px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bus-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0;
+  border-bottom: 1px solid var(--divider);
+  background: var(--panel-bg);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.bus-table th button {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  color: var(--panel-muted);
+  font: inherit;
+  font-weight: 600;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.bus-table th[aria-sort='ascending'] button::after {
+  content: ' ▲';
+}
+
+.bus-table th[aria-sort='descending'] button::after {
+  content: ' ▼';
+}
+
+.bus-table th[aria-sort='ascending'] button,
+.bus-table th[aria-sort='descending'] button {
+  color: var(--panel-text);
+}
+
+.bus-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--divider);
+  vertical-align: top;
+}
+
+.bus-table tbody tr {
+  cursor: pointer;
+}
+
+.bus-table tbody tr:hover,
+.bus-table tbody tr:focus-visible {
+  background: var(--row-hover);
+  outline: none;
+}
+
+.bus-table .num,
+.bus-table th.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.bus-table .num-id {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  margin: 10px 14px 0;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.segmented button {
+  flex: 1;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--panel-bg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.15);
+  font-weight: 600;
+}
+
+.an-section {
+  padding: 4px 14px 14px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.an-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.an-head h3 {
+  margin: 10px 0 4px;
+  font-size: 14px;
+}
+
+.an-section h4 {
+  margin: 12px 0 6px;
+  color: var(--panel-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.an-section > p {
+  margin: 4px 0;
+}
+
+.an-stat {
+  font-size: 13px;
+}
+
+.an-stat strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.an-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
+}
+
+.an-track {
+  height: 10px;
+}
+
+/* One series, one hue; counts are labelled beside every bar. */
+.an-bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--focus);
+}
+
+.an-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.an-cols {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 64px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.an-col-slot {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.an-col {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--focus);
+}
+
+.an-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  color: var(--panel-muted);
+  font-size: 11px;
+}
+
+.an-axis span {
+  width: 25%;
+}
+
+.an-event {
+  display: grid;
+  grid-template-columns: 112px auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 0;
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
+}
+
+.an-when {
+  color: var(--panel-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.an-weather {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.an-weather-name,
+.an-weather-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+
+.analytics .rel-legend {
+  padding: 6px 0;
+  border-bottom: 0;
+}
+
+.an-tools {
+  padding: 4px 0 6px;
+}
+
+.an-tools select {
+  flex: 1;
+}
+
+.speed-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.speed-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.an-stretch {
+  padding: 6px 0;
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
+}
+
+.an-stretch .link {
+  text-align: left;
+}
+
+.an-stretch .badges {
+  display: inline-flex;
+  gap: 3px;
+  vertical-align: middle;
 }

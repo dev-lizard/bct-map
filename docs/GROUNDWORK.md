@@ -344,6 +344,69 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **Tests:** 7 more in `test/integrations.test.mjs`: amenity packing, directions links, NWS parsing, storm features and point-in-polygon.
 - **Not checked:** the header banner with a real severe alert (none was active; the alerts that were active are Moderate and Minor).
 
+**Phase 9 — analytics, a bus table and Overpass ✅ (built and tested locally)**
+
+- **Bunching** (`server/analytics.mjs`): two buses on the same route and direction at the same stop within 3 minutes, and within a quarter of their timetabled gap, when that gap is 10 minutes or more.
+  - **How it's measured:** from BCT's trip-update times (predicted ahead, actual just behind), so it needs no map geometry.
+  - **Which trips count:** only trips with a bus on them in the vehicle feed. BCT also predicts trips no bus has started, which would otherwise pair a bus with its own next trip.
+  - **Recording:** one event per pair per service day. The Durable Object stores events in SQLite (`bunching` table) and the Node server in `data/analytics/`.
+  - **First live check:** two route 72 buses (20080 and 20095) due at the same stop at the same second, 30 minutes apart on the timetable.
+- **Cancellations:** trips the feed marks CANCELED, once per trip per day (`canceled` table). 11–18 a day in testing.
+  - Trips that silently never ran aren't counted. That would need tracking which scheduled trips never appear, and keeping enough uptime records to tell a missed trip from a gap in recording.
+- **Weather and adherence:** Open-Meteo's hourly rain history for Fort Lauderdale, which goes back 31 days, is joined at query time with the hourly on-time counts already recorded. Nothing new is stored.
+  - **Weather classes:** dry, rain (≥ 0.1 mm or a rain code), and heavy rain or storms (≥ 2.5 mm or thunderstorm codes).
+  - **"vs dry":** compares each class with dry weather at the same hours of the day, weighted by that class's departures, so rush hours are compared with rush hours (tested).
+  - **Caveat:** one point stands in for the county.
+- **Buses panel** (`web/buses.js`): a sortable, filterable table with CSV download. The sidebar column widens to 600 px on screens at least 1,100 px wide.
+- **Analytics panel** (`web/analytics.js`): bunching (count, by route, a 24-hour column chart, latest events), weather classes as early, on-time and late bars with "vs dry", and cancellations by route. Every list downloads as CSV.
+- **Fixes:**
+  - **Next-stop names:** about 10% of BCT's stop-time updates name a stop by its code ("3533") where the timetable's id is "3533_Merged_2". Those buses lost their next-stop name and position, and bunching at those stops was missed. The stop id now comes from the timetable row with the same stop_sequence (regression test added).
+  - **Truncated names:** stop names and headsigns in the detail panel wrap instead of being cut off with an ellipsis.
+- **Font:** Overpass (Google Fonts) for the whole interface. OpenFreeMap only serves Noto Sans glyphs, so the map's own street and place labels stay Noto Sans.
+- **Worth knowing from the data:** these numbers, from trip-update times, said BCT buses ran early (more than 1 minute) about as often as on time: 47% early, 41% on time, 11% late over 2,500 departures. Phase 10 found that the trip-update times for passed stops are the timetable shifted by BCT's delay estimate, and Phase 11 switched to GPS timing.
+- **Tests:** 9 more (`test/analytics.test.mjs`, plus the stop-code fix).
+
+**Phase 10 — bus speeds and congestion from GPS ✅ (built and tested locally)**
+
+- **Why GPS, not trip updates:** BCT's trip updates drop most stops a bus has passed. Of the few they keep, 305 of 307 stop-to-stop gaps were exactly the timetable's, so they are the timetable shifted by the current delay, not measurements.
+  - This also matters for the on-time stats, which read those same passed-stop times. They probably reflect BCT's delay estimate rather than an observed departure (see "Worth knowing" in Phase 9). Measuring timepoint departures from GPS instead, with the machinery below, is the natural next step.
+- **How it measures** (`server/segments.mjs`):
+  - **Placing reports:** each vehicle report is placed along its trip's stops (joined by straight lines).
+  - **Stop times:** the moment the bus passes each stop is interpolated between consecutive reports.
+  - **Running times:** the time between two stops is that stretch's running time.
+  - **Rejected:** reports over 250 m off the line, gaps over 5 minutes, runs over 30 minutes or 70 mph, and a bus seen past its last stop (the terminal).
+  - **First live sample:** 139 runs in 2 minutes with a median of 19 mph (10th–90th percentile 9–36 mph).
+- **What's kept:** per calendar day, for each stop pair, per time of day (night, morning peak 6–9, midday, afternoon peak 3–7, evening): runs, measured seconds and timetabled seconds; plus network totals per hour for weather.
+  - Each day is one JSON value, about 7 KB per 2 minutes of data at first and growing to an estimated few hundred KB.
+  - **Worker:** one row in `segment_days`, saved every 10 minutes, so a few hundred row writes a day.
+  - **Node:** `data/segments/<date>.json`.
+  - Kept 31 days.
+- **Congestion** (`web/speeds.js`): each stretch is compared with itself at its fastest time of day (with at least 3 runs). Time over that, times runs, per day, is bus time lost.
+  - **Why not the timetable:** buses beat it on most stretches (measured time is about 75% of timetabled), because BCT's stop times have 1-minute resolution and padding sits at timepoints.
+- **Panel and map:** an Analytics section with a time-of-day selector, average speed, the 10 stretches losing the most time, the 10 slowest, running time in wet weather (same-hours comparison), and CSV.
+  - "Show on map" draws stretches with 2 or more runs in five speed bands; slower is darker and wider. The route lines fade meanwhile.
+- **Checked:**
+  - Live recording through the Node server.
+  - The panel and map in a browser. The page's request was intercepted to triple the real runs, because after a few minutes only 9 stretches had 2 runs; buses come every 20–60 minutes, so a full day is needed.
+  - 9 tests (`test/segments.test.mjs`, `test/speeds.test.mjs`).
+- **Not checked:** the Worker's recording under `wrangler dev` (it bundles; the logic is shared with the tested Node path).
+
+**Phase 11 — on-time stats timed from GPS ✅ (built and tested locally)**
+
+- **What changed:** timepoint departures are now timed from GPS, with the same stop-passing calculation as the speed measurements (`SegmentLog.observe`'s `onPass`).
+  - A trip's first stop counts as departed once the bus is 25 m past it, so time waiting at the terminal isn't counted.
+  - When the feed gives no start date, the service day is whichever puts the timetabled time nearest.
+- **Effect:** in the first 8 minutes (93 departures around 3:20 PM), 56% were on time, 15% early and 29% late, with a mean of +3 minutes. The trip-update method had said 47% early, 41% on time and 11% late over the day. That suggests BCT's passed-stop times reflect its delay estimate, not observed departures.
+- **Clean start:** the old and new numbers aren't comparable, so the two are kept apart.
+  - **Node:** logs to `data/ontime/`; `data/reliability/` is left on disk unread.
+  - **Durable Object:** clears its counts once, the first time the new code runs (state `ontimeSource = gps`).
+  - The weather comparison, which reads the same counts, starts over with it.
+- **Tests:** the reliability tests now feed GPS passages, plus a passage test (87 in all).
+- **Weather source fixed:** Open-Meteo's "past" hours are model output, not measurements, and missed almost all of South Florida's showers. Eight points across Broward showed only 0.4 mm on a day the radar and stations showed rain; over a month it had 32 wet hours.
+  - **Now:** observed hourly rain at Broward's four airport weather stations (FLL, FXE, HWO, PMP), from Iowa Environmental Mesonet's ASOS archive (`hourlyprecip.py`). The same month has 108 wet hours.
+  - **Classes:** an hour is as wet as its wettest station. Rain is 0.01 in or more and heavy is 0.10 in or more; a trace counts as dry.
+  - **Hours:** a report valid at 14:00 covers 13:00–14:00. Hours no station reported (including the last hour or two, before IEM has them) are left out rather than counted as dry.
+
 ---
 
 ## 7. Risks and open questions
@@ -366,6 +429,9 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 | `scripts/build-static.mjs` | BCT GTFS zip → `public/data/<folder>/…`, including the compact `schedule.json` | ✅ 44 routes, 5,981 trips, 4,793 stops, 166 shapes; schedule 1.9 MB (148 KB gzipped) |
 | `scripts/build-site.mjs` | Assembles `_site/` for GitHub Pages and writes `runtime-config.js` | ✅ served under a subpath against a local Worker |
 | `web/live.js` | Live snapshot (bearing, speed, delay, joins), stop departure boards, trip timelines, alerts, in the browser | ✅ against live feeds, plus 9 tests in `test/departures.test.mjs` and `test/schedule.test.mjs` |
+| `server/segments.mjs`, `web/speeds.js` | Running times between stops from GPS; speeds, congestion and the map layer | ✅ 9 tests; recorded live and checked in a browser |
+| `server/analytics.mjs`, `server/analytics-log.mjs` | Bunching, cancellations, adherence by weather; the Node server's event log | ✅ 8 tests; checked on live data and in the panel |
+| `web/buses.js`, `web/analytics.js`, `web/csv.js` | Buses table and Analytics panel, with CSV downloads | ✅ checked in a browser at 800 and 1,280 px |
 | `web/amenities.js` | Stop amenities and wheelchair access, packed into one number per stop | ✅ 2 tests; all 4,657 stops matched; stop panel checked in a browser |
 | `server/extras.mjs` (weather alerts, storms) | NWS alerts for Broward; NHC storm cones and whether Broward is inside | ✅ 4 tests; live alerts and Hurricane Vance checked through the Node server and `wrangler dev` |
 | `web/sw.js`, `web/manifest.webmanifest`, `scripts/make-icons.mjs` | Installable app: service worker, manifest, icons | ⚠️ caching rules checked in a Node harness; registration only checkable once deployed |

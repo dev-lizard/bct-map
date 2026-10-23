@@ -221,3 +221,23 @@ export const getWeatherAlerts = cached(loadWeatherAlerts, ALERTS_TTL_MS);
 export const getStorms = cached(loadStorms, STORMS_TTL_MS);
 const getAllStorms = cached(() => loadStorms({ basins: 'all' }), STORMS_TTL_MS);
 export const getStormsFor = basin => (basin === 'all' ? getAllStorms() : getStorms());
+
+// Observed hourly rain for the last month at Broward's four airport weather stations (ASOS):
+// Fort Lauderdale/Hollywood International (FLL), Fort Lauderdale Executive (FXE), North Perry in
+// Pembroke Pines (HWO) and Pompano Beach (PMP), from Iowa Environmental Mesonet's archive of their
+// hourly reports. Used to compare buses in wet and dry hours (analytics.mjs). Weather-model history,
+// such as Open-Meteo's, missed nearly all of the scattered showers this is meant to catch.
+// Returns the CSV: station,network,valid,precip_in.
+export const RAIN_STATIONS = ['FLL', 'FXE', 'HWO', 'PMP'];
+export const WEATHER_HISTORY_TTL_MS = 20 * 60_000;
+
+export async function loadWeatherHistory(nowMs = Date.now()) {
+  const iso = ms => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+  const url = 'https://mesonet.agron.iastate.edu/cgi-bin/request/hourlyprecip.py?network=FL_ASOS' +
+    `&station=${RAIN_STATIONS.join(',')}&sts=${iso(nowMs - 31 * 86_400_000)}&ets=${iso(nowMs + 3_600_000)}&tz=America/New_York`;
+  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`GET hourly rain -> HTTP ${res.status}`);
+  return res.text();
+}
+
+export const getWeatherHistory = cached(loadWeatherHistory, WEATHER_HISTORY_TTL_MS);

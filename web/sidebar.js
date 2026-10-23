@@ -1,23 +1,36 @@
-// The left-hand rail and the panels it opens: routes (with the route filter), search, alerts and
-// settings. It reaches the map only through the callbacks, so it knows nothing of MapLibre or three.js.
+// The left-hand rail and the panels it opens: routes (with the route filter), search, alerts, a
+// table of live buses, reliability, analytics and settings. It reaches the map only through the
+// callbacks, so it knows nothing of MapLibre or three.js.
+import { createAnalytics } from './analytics.js';
 import { getApiJson } from './api.js';
+import { createBusTable } from './buses.js';
 import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 
 const PANELS = [
   { name: 'routes', label: 'Routes' },
   { name: 'search', label: 'Search' },
   { name: 'alerts', label: 'Alerts' },
+  { name: 'buses', label: 'Buses' },
   { name: 'reliability', label: 'Reliability' },
+  { name: 'analytics', label: 'Analytics' },
   { name: 'settings', label: 'Settings' },
 ];
 // Fewer timepoint departures than this and a percentage is more noise than signal.
 const FEW_SAMPLES = 20;
 const MAX_BADGES = 6;
+// Panels with tables get a wider column on large screens.
+const WIDE = new Set(['buses', 'analytics']);
 
 // routes: [{ routeId, routeShortName, routeLongName, routeColor, routeTextColor }], in display order.
 // search(query, limit): see search.js. settings: the live settings object (read only here).
-export function createSidebar(railEl, panelEl, { routes, search, settings, onFilter, onShowRoute, onStop, onTrip, onSettings, onOpen }) {
+// onBus(vehicle) shows a bus. stopName, stop, tripInfo, stopPairRoutes and onSpeedMap serve the
+// Analytics panel (see analytics.js).
+export function createSidebar(railEl, panelEl, { routes, search, settings, onFilter, onShowRoute, onStop, onTrip, onBus, onSettings, onOpen, stopName, stop, tripInfo, stopPairRoutes, onSpeedMap }) {
   const routesById = new Map(routes.map(r => [r.routeId, r]));
+  const routeOrder = new Map(routes.map((r, i) => [r.routeId, i]));
+  // Route details for badges and sorting, with a grey fallback for a route the timetable lacks.
+  const route = id => ({ routeId: id, routeShortName: id ?? '?', routeColor: '#888888', routeTextColor: '#FFFFFF', ...routesById.get(id), order: routeOrder.get(id) });
+  let buses = { vehicles: [], nowS: Date.now() / 1000 };
   let openName = null;
   let filter = null; // Set of route ids shown, or null for all
   let counts = new Map(); // route id -> buses running now
@@ -46,17 +59,26 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
   }
 
   const sections = {};
-  const builders = { routes: buildRoutes, search: buildSearch, alerts: buildAlerts, reliability: buildReliability, settings: buildSettings };
+  const builders = {
+    routes: buildRoutes,
+    search: buildSearch,
+    alerts: buildAlerts,
+    buses: () => createBusTable({ route, onBus }),
+    reliability: buildReliability,
+    analytics: () => createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap }),
+    settings: buildSettings,
+  };
   const section = name => (sections[name] ??= builders[name]());
 
   function show(name) {
     openName = name;
     panelEl.hidden = false;
+    panelEl.parentElement.classList.toggle('wide', WIDE.has(name));
     for (const [n, b] of buttons) b.setAttribute('aria-pressed', String(n === name));
     titleEl.textContent = PANELS.find(p => p.name === name).label;
     const s = section(name);
     bodyEl.replaceChildren(s.node);
-    s.sync?.();
+    s.sync?.(name === 'buses' ? buses : undefined);
     onOpen(name);
     s.focus?.();
   }
@@ -65,6 +87,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
     if (!openName) return;
     openName = null;
     panelEl.hidden = true;
+    panelEl.parentElement.classList.remove('wide');
     for (const b of buttons.values()) b.setAttribute('aria-pressed', 'false');
     onOpen(null);
   }
@@ -249,7 +272,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
 
     function allRoutesView(data) {
       if (!data.samples) {
-        return [el('p', { className: 'panel-note' }, 'No departures recorded yet. Each timepoint a bus passes is logged; check back in a few minutes.')];
+        return [el('p', { className: 'panel-note' }, 'No departures recorded yet. Each time a bus leaves a timepoint, its GPS-measured time is logged; check back in a few minutes.')];
       }
       const rows = data.routes.map(r => {
         const row = el('button', { type: 'button', className: 'rel-row' },
@@ -301,7 +324,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
         since = ` Recording since ${formatTime(data.collectingSince)} ${day}.`;
       }
       return el('p', { className: 'panel-note' },
-        `On time means no more than 1 minute early or 5 minutes late at a timepoint. Last ${data.windowDays} days, ${data.samples.toLocaleString('en-US')} ${data.samples === 1 ? 'departure' : 'departures'}.${since}`);
+        `Departure times at timepoints, measured from bus GPS. On time means no more than 1 minute early or 5 minutes late. Last ${data.windowDays} days, ${data.samples.toLocaleString('en-US')} ${data.samples === 1 ? 'departure' : 'departures'}.${since}`);
     }
 
     return { node, sync: load };
@@ -394,13 +417,16 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
         if (openName === 'settings') bodyEl.replaceChildren(sections.settings.node);
       }
     },
-    // New feed data: live bus counts per route and the current alerts.
+    // New feed data: live bus counts per route, the current alerts, and the buses themselves
+    // ({ vehicles, nowS }).
     update(next) {
       counts = next.counts;
       alerts = next.alerts;
+      buses = next.buses;
       updateCount();
       sections.routes?.sync();
       sections.alerts?.sync();
+      if (openName === 'buses') sections.buses.sync(buses);
     },
     // { alerts, moreUrl } from /api/weather-alerts.
     setWeatherAlerts(next) {

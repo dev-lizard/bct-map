@@ -28,9 +28,12 @@ export function summarizeTripUpdates(feed, { trips, timezone, stops = null, nowS
     if (!tripId) continue;
     const scheduled = trips[tripId];
     const startDate = update.trip.startDate || ymdInZone(new Date(feedTs * 1000), timezone);
+    // BCT sometimes gives a stop's code where the timetable has a longer id ("3533" for
+    // "3533_Merged_2"), so the stop id comes from the timetable row with the same stop_sequence.
+    const rowBySeq = scheduled ? new Map(scheduled.s.map(r => [r[0], r])) : null;
     const calls = (update.stopTimeUpdate ?? []).map(s => ({
       seq: s.stopSequence,
-      stopId: s.stopId,
+      stopId: rowBySeq?.get(s.stopSequence)?.[1] ?? s.stopId,
       time: Number(s.arrival?.time ?? s.departure?.time) || null,
       delay: s.arrival?.delay ?? s.departure?.delay ?? null,
     }));

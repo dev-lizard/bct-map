@@ -3,7 +3,8 @@
 //     new deploy shows up at once; the cached copy is used only when the network fails.
 //   - Timetable files in dated build folders (data/<YYYYMMDD_HHMMSS>/…) never change: cache first.
 //     Only the two newest builds are kept.
-//   - MapLibre and three.js from unpkg are pinned to exact versions: cache first.
+//   - MapLibre and three.js from unpkg are pinned to exact versions, and Google's font files never
+//     change at a given address: cache first.
 //   - Everything else goes straight to the network and is never cached: the live API, map tiles,
 //     radar and weather.
 const SHELL = 'bt3d-shell-v1';
@@ -29,7 +30,7 @@ self.addEventListener('fetch', event => {
     if (url.pathname.includes('/api/')) return; // the dev server's live API
     if (BUILD.test(url.pathname)) event.respondWith(cacheFirst(request, DATA, pruneBuilds));
     else event.respondWith(networkFirst(request));
-  } else if (url.hostname === 'unpkg.com') {
+  } else if (url.hostname === 'unpkg.com' || url.hostname === 'fonts.gstatic.com') {
     event.respondWith(cacheFirst(request, LIBS));
   }
 });

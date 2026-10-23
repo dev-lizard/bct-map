@@ -32,7 +32,9 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 - **Your location:** the locate button (bottom left) shows where you are, or tells you how far outside Broward you are.
 - **Buses:** drawn in 3D, or as lighter 2D dots with heading arrows (Settings → Buses). "Automatic" switches to 2D if the map runs slowly.
 - **Header:** Broward time and current weather (Open-Meteo). Settings → Rain radar adds the US NEXRAD radar layer.
-- **Reliability (rail):** on-time performance by route and by hour, from each timepoint departure the API records. Locally that's `data/reliability/`; when deployed, a Cloudflare Durable Object.
+- **Buses (rail):** every bus in the feed as a sortable, filterable table: route, bus number, destination, next stop, schedule adherence and report age. Click a row to show the bus; download it as CSV.
+- **Analytics (rail):** bus speeds between stops measured from GPS, with the stretches where congestion costs the most time, the slowest stretches, running time in wet weather, and a map layer coloured by speed; bus bunching (by route, by hour, and each event), schedule adherence in dry, rainy and stormy hours compared with dry weather at the same hours, and canceled trips, over today, 7 or 30 days, each downloadable as CSV.
+- **Reliability (rail):** on-time performance by route and by hour, from each timepoint departure, timed from bus GPS (the moment the bus passes the stop, or pulls away from its first stop). Locally the log is `data/ontime/`; when deployed, a Cloudflare Durable Object.
 - **Rail (left):** Routes (filter which routes are shown, or pick one to zoom to it), Search (stops by name or number, routes by number or name), Alerts, and Settings. Settings and the route filter are saved in your browser.
 - **Theme:** day or night is picked by the time in Broward, unless you choose one in Settings. `?theme=day` or `?theme=night` in the URL overrides both.
 - **Links:** the URL always describes the current view, so you can bookmark or share it. The camera is in the hash (`#zoom/lat/lon/bearing/pitch`); the query string can add `?routes=01,22`, `?stop=0210`, or `?trip=<trip_id>&date=YYYYMMDD`. The detail panel's link button copies it.
@@ -56,6 +58,8 @@ Served by the Cloudflare Worker (`worker/`) when deployed, and by `server/index.
 | Endpoint | Returns |
 |---|---|
 | `GET /api/rt` | BCT's vehicle positions, trip updates and alerts as raw protobuf in one bundle, plus up to three older vehicle feeds (format in `web/gtfs-rt.js`). `X-Server-Time` gives the server's clock. |
+| `GET /api/segments` | Measured bus running times for every stretch between stops, per time of day, plus running time by weather (`?days=7`, up to 30) |
+| `GET /api/analytics` | Bunching events, canceled trips, and on-time stats by weather (`?days=7`, up to 30) |
 | `GET /api/reliability` | On-time / early / late shares at timepoints, by route, or by hour for one route (`?route=BCT22&days=7`) |
 | `GET /api/weather` | Current conditions in Fort Lauderdale (cached 10 minutes) |
 | `GET /api/radar` | Time and tile URL of the latest NEXRAD radar composite |

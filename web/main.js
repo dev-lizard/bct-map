@@ -10,6 +10,8 @@ import { apiUrl, getApiJson } from './api.js';
 import { cityName, describeAmenities } from './amenities.js';
 import { unpackBundle } from './gtfs-rt.js';
 import { LiveFeed } from './live.js';
+import { serviceDayStart } from './gtfs-util.js';
+import { routesByStopPair, SPEED_BANDS } from './speeds.js';
 import { createFrameMonitor, kmOutside, serviceArea } from './device.js';
 import { el, formatClock, formatDate, formatTime, formatWhen, icon, routeBadge, setTimeFormat } from './dom.js';
 import { linkSearch, parseLink } from './links.js';
@@ -850,7 +852,7 @@ function applyFeed(feed) {
   updateStatus();
   const counts = new Map();
   for (const v of feed.vehiclePositions) if (v.routeId) counts.set(v.routeId, (counts.get(v.routeId) ?? 0) + 1);
-  sidebar?.update({ counts, alerts: feed.alerts ?? [] });
+  sidebar?.update({ counts, alerts: feed.alerts ?? [], buses: { vehicles: feed.vehiclePositions, nowS: feed.generatedAt } });
   // A trip from a link: select its bus as soon as the feed has it.
   const focusId = pendingTripFocus && vehicleForTrip(pendingTripFocus);
   if (focusId) {
@@ -1155,6 +1157,36 @@ const panel = createPanel(document.getElementById('panel'), {
   },
 });
 
+// ---- Bus speed layer (Analytics → Show on map) -----------------------------------------------
+
+let stopPairRoutesCache = null;
+
+// Stretches between stops coloured by measured bus speed (web/speeds.js), above the route lines and
+// below the stops and buses. data: GeoJSON, or null to remove the layer.
+function showSpeedLayer(data) {
+  // The route lines fade while speeds are shown, so a red route isn't mistaken for a slow stretch.
+  if (map.getLayer('routes')) map.setPaintProperty('routes', 'line-opacity', data ? 0.2 : 0.75);
+  if (!data) {
+    if (map.getLayer('bus-speeds')) map.setLayoutProperty('bus-speeds', 'visibility', 'none');
+    return;
+  }
+  if (!map.getSource('bus-speeds')) {
+    map.addSource('bus-speeds', { type: 'geojson', data });
+    const color = ['match', ['get', 'band'], ...SPEED_BANDS.flatMap((b, i) => [i, b.color]), '#888888'];
+    map.addLayer({
+      id: 'bus-speeds',
+      type: 'line',
+      source: 'bus-speeds',
+      layout: { 'line-cap': 'round' },
+      // Slower stretches are drawn wider so they stand out.
+      paint: { 'line-color': color, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, ['-', 4, ['*', 0.5, ['get', 'band']]], 16, ['-', 10, ['get', 'band']]] },
+    }, ['stops', '3d-buildings'].find(id => map.getLayer(id)));
+  } else {
+    map.getSource('bus-speeds').setData(data);
+  }
+  map.setLayoutProperty('bus-speeds', 'visibility', 'visible');
+}
+
 // ---- Sidebar, settings and links -------------------------------------------------------------
 
 let sidebar = null; // created once routes and stops have loaded
@@ -1172,6 +1204,21 @@ function createShell() {
     },
     onStop: stopId => openStop(stopId),
     onTrip: tripId => openTrip(tripId),
+    onBus(v) {
+      if (v.tripId) openTrip(v.tripId, null, v.id);
+      else selectBus(v.id);
+      showBus(v.id);
+    },
+    stopName: stopId => stopsById.get(stopId)?.name ?? null,
+    stop: stopId => stopsById.get(stopId) ?? null,
+    stopPairRoutes: () => (stopPairRoutesCache ??= live ? routesByStopPair(live.trips) : new Map()),
+    onSpeedMap: showSpeedLayer,
+    tripInfo(tripId, date) {
+      const trip = live?.trips[tripId];
+      if (!trip) return null;
+      const first = trip.s.find(r => r[2] != null);
+      return { headsign: trip.h, start: date && first ? serviceDayStart(date, live.timezone) + first[2] : null };
+    },
     onSettings: changeSettings,
     onOpen(name) {
       if (name && !panelsFitSideBySide()) panel.close();

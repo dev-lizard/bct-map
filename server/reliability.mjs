@@ -1,13 +1,14 @@
 // The Node server's on-time log (the Worker keeps the same numbers in a Durable Object; see
 // worker/recorder.js). The rules are in ontime.mjs.
 //
-// Each departure is recorded once and appended to data/reliability/<service date>.jsonl, one JSON
-// array per line: [unix time, route_id, trip_id, stop_sequence, delay seconds, hour 0-23]. The last
-// KEEP_DAYS days are loaded at startup, so the numbers build up across restarts.
+// Each departure is recorded once and appended to <dir>/<service date>.jsonl (the server uses
+// data/ontime/), one JSON array per line: [unix time, route_id, trip_id, stop_sequence, delay
+// seconds, hour 0-23]. The last KEEP_DAYS days are loaded at startup, so the numbers build up across
+// restarts.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { serviceDayStart } from '../web/gtfs-util.js';
-import { addDelay, emptyCount, passedTimepoints, summarize } from './ontime.mjs';
+import { addDelay, emptyCount, summarize, timepointDepartures } from './ontime.mjs';
 
 export { ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
 const KEEP_DAYS = 30;
@@ -50,19 +51,20 @@ export class ReliabilityLog {
     this.samples.sort((a, b) => a[0] - b[0]);
   }
 
-  // liveTrips: trip-update summaries ({ tripId, startDate, canceled, nextStop, bySeq }).
-  // trips: the timetable's trips. Records every timepoint the bus has already passed and that
-  // hasn't been recorded. Returns how many.
-  observe(liveTrips, trips, feedTs) {
+  // passages: stops buses were seen to pass, from SegmentLog.observe's onPass. trips: the
+  // timetable's trips. Records each timepoint departure not recorded before. Returns how many.
+  observe(passages, trips) {
     const lines = new Map(); // service date -> lines to append
     let added = 0;
-    for (const d of passedTimepoints(liveTrips, trips, feedTs, { timezone: this.timezone, seen: date => this.#seenFor(date) })) {
+    let latest = 0;
+    for (const d of timepointDepartures(passages, trips, { timezone: this.timezone, seen: date => this.#seenFor(date) })) {
+      latest = Math.max(latest, d.time);
       this.samples.push([d.time, d.routeId, d.delay, d.hour]);
       if (!lines.has(d.date)) lines.set(d.date, []);
       lines.get(d.date).push(JSON.stringify([d.time, d.routeId, d.tripId, d.seq, d.delay, d.hour]));
       added++;
     }
-    if (added) this.#prune(feedTs);
+    if (added) this.#prune(latest);
     if (this.dir && lines.size) {
       // Appends are chained so lines from consecutive refreshes never interleave.
       this.#writing = this.#writing

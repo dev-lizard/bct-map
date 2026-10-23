@@ -1,43 +1,48 @@
 // On-time performance rules, shared by the Node server's log (reliability.mjs) and the Worker's
 // Durable Object (worker/recorder.js). Measured the way US transit agencies usually do: at each
 // timepoint a bus passes, how early or late it was against the timetable. "On time" is no more than
-// 1 minute early and 5 minutes late. The time used is BCT's own trip-update time for the stop once
-// the bus is past it, which BCT keeps listing for passed stops.
-import { serviceDayStart } from '../web/gtfs-util.js';
+// 1 minute early and 5 minutes late.
+//
+// The time is measured from GPS: the moment the bus is seen to pass the stop (server/segments.mjs),
+// or for a trip's first stop, to pull away from it. BCT's trip updates aren't used: for stops a bus
+// has passed they mostly give the timetable shifted by the current delay, not an observed time.
+import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
 
 export const ON_TIME_EARLY_S = -60;
 export const ON_TIME_LATE_S = 300;
 // A "delay" this large means a mismatched trip or date, not a real departure.
 const MAX_PLAUSIBLE_DELAY_S = 3 * 3600;
 
-// Yields { date, tripId, seq, routeId, time, delay, hour } for each timepoint a bus has passed that
-// isn't in seen(date) yet, and adds it there.
-// liveTrips: trip-update summaries (summarizeTripUpdates in web/live.js).
+// Yields { date, tripId, seq, routeId, time, delay, hour } for each timepoint departure not in
+// seen(date) yet, and adds it there.
+// passages: [{ tripId, seq, time, startDate }] from SegmentLog.observe's onPass.
 // trips: the timetable's trips (trip_id -> { r, s: [[stop_sequence, stop_id, seconds, 1 if timepoint]] }).
 // seen(date): a Set of "trip_id|stop_sequence" already recorded for that service date.
-export function* passedTimepoints(liveTrips, trips, feedTs, { timezone, seen }) {
+export function* timepointDepartures(passages, trips, { timezone, seen }) {
   const hourFormat = hourFormatFor(timezone);
-  const dayStarts = new Map();
-  for (const live of liveTrips) {
-    if (live.canceled || !live.nextStop || !live.startDate) continue;
-    const trip = trips[live.tripId];
-    if (!trip) continue;
-    const recorded = seen(live.startDate);
-    if (!dayStarts.has(live.startDate)) dayStarts.set(live.startDate, serviceDayStart(live.startDate, timezone));
-    const dayStart = dayStarts.get(live.startDate);
-    for (const [seq, , secs, timepoint] of trip.s) {
-      if (seq >= live.nextStop.seq) break; // rows are in stop order; the rest are still ahead
-      if (timepoint !== 1 || secs == null) continue;
-      const key = `${live.tripId}|${seq}`;
-      if (recorded.has(key)) continue;
-      const time = live.bySeq.get(seq);
-      if (!time || time > feedTs) continue;
-      recorded.add(key);
-      const delay = time - (dayStart + secs);
-      if (Math.abs(delay) > MAX_PLAUSIBLE_DELAY_S) continue;
-      yield { date: live.startDate, tripId: live.tripId, seq, routeId: trip.r, time, delay, hour: Number(hourFormat.format(time * 1000)) };
-    }
+  for (const p of passages) {
+    const trip = trips[p.tripId];
+    const row = trip?.s.find(r => r[0] === p.seq);
+    if (!row || row[3] !== 1 || row[2] == null) continue;
+    const date = p.startDate || serviceDateFor(p.time, row[2], timezone);
+    const recorded = seen(date);
+    const key = `${p.tripId}|${p.seq}`;
+    if (recorded.has(key)) continue;
+    recorded.add(key);
+    const time = Math.round(p.time);
+    const delay = time - (serviceDayStart(date, timezone) + row[2]);
+    if (Math.abs(delay) > MAX_PLAUSIBLE_DELAY_S) continue;
+    yield { date, tripId: p.tripId, seq: p.seq, routeId: trip.r, time, delay, hour: Number(hourFormat.format(time * 1000)) };
   }
+}
+
+// The service date (today's or, for trips past midnight, yesterday's) whose timetable puts `secs`
+// nearest to unix time `time`, when the feed doesn't say.
+function serviceDateFor(time, secs, timezone) {
+  const today = ymdInZone(new Date(time * 1000), timezone);
+  const yesterday = addDays(today, -1);
+  const off = date => Math.abs(time - (serviceDayStart(date, timezone) + secs));
+  return off(yesterday) < off(today) ? yesterday : today;
 }
 
 const hourFormats = new Map();
