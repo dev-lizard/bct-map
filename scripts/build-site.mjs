@@ -16,6 +16,11 @@ await fs.rm(OUT, { recursive: true, force: true });
 await fs.cp(path.join(ROOT, 'web'), OUT, { recursive: true });
 await fs.cp(path.join(ROOT, 'public', 'data'), path.join(OUT, 'data'), { recursive: true });
 await fs.writeFile(path.join(OUT, 'runtime-config.js'), `// Written by scripts/build-site.mjs.\nwindow.BT3D_API = ${JSON.stringify(apiUrl)};\n`);
+// A version on its address, so a changed WORKER_URL reaches browsers at once instead of after
+// GitHub Pages' 10-minute cache.
+const indexFile = path.join(OUT, 'index.html');
+const stamp = Date.now().toString(36);
+await fs.writeFile(indexFile, (await fs.readFile(indexFile, 'utf8')).replace('./runtime-config.js"', `./runtime-config.js?v=${stamp}"`));
 // Pages would otherwise run the site through Jekyll, which skips some files.
 await fs.writeFile(path.join(OUT, '.nojekyll'), '');
 

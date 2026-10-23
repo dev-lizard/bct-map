@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Broward Transit 3D</title>
     <meta name="description" content="A real-time 3D map of Broward County Transit buses." />
+    <meta name="theme-color" content="#0f766e" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="BCT 3D" />
     <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" />
     <link href="./style.css" rel="stylesheet" />
     <!-- MapLibre GL draws the OpenFreeMap basemap; three.js draws the buses in a MapLibre custom layer.
@@ -25,7 +30,9 @@
           <div id="weather" class="weather" hidden></div>
         </div>
         <div id="status-text" role="status">Loading…</div>
+        <button id="weather-banner" class="weather-banner" type="button" hidden></button>
         <div id="radar-note" class="radar-note" hidden></div>
+        <div id="storm-note" class="radar-note storm-note" hidden></div>
         <div id="filter-note" class="filter-note" hidden></div>
       </div>
       <section id="sidebar" class="panel sidebar" aria-label="Routes, search, alerts and settings" hidden></section>

@@ -33,3 +33,13 @@ export function linkSearch(search, { routes, view }) {
   const query = params.toString().replace(/%2C/g, ','); // keep "routes=01,22" readable
   return query ? `?${query}` : '';
 }
+
+// Transit directions to a point: Apple Maps on Apple devices (iPads report a Mac user agent too),
+// Google Maps everywhere else.
+export function directionsUrl({ lat, lon }, userAgent = '') {
+  const apple = /iPhone|iPad|iPod|Macintosh/.test(userAgent);
+  const point = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+  return apple
+    ? `https://maps.apple.com/?daddr=${point}&dirflg=r`
+    : `https://www.google.com/maps/dir/?api=1&destination=${point}&travelmode=transit`;
+}

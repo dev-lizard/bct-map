@@ -6,6 +6,8 @@
 //   GET /api/reliability                   on-time performance by route, or by hour (?route=ID&days=7)
 //   GET /api/weather                       current conditions in Fort Lauderdale
 //   GET /api/radar                         time and tile URL of the latest rain radar
+//   GET /api/weather-alerts                active National Weather Service alerts for Broward
+//   GET /api/storms                        active Atlantic storms' forecast cones (?basin=all for every basin)
 //   GET /api/health                        ok / degraded / down, with the checks behind it (503 when down)
 //   GET /data/...                          static GTFS output from scripts/build-static.mjs
 //   GET /...                               the web app in web/
@@ -22,7 +24,7 @@ import { decodeFeed, feedTimestamp, packBundle } from '../web/gtfs-rt.js';
 import { summarizeTripUpdates } from '../web/live.js';
 import { Schedule } from '../web/schedule.js';
 import { fetchAllFeeds, rollHistory } from './bct-feed.mjs';
-import { getRadar, getWeather } from './extras.mjs';
+import { getRadar, getStormsFor, getWeather, getWeatherAlerts } from './extras.mjs';
 import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
 import { healthReport } from './health.mjs';
 import { ReliabilityLog } from './reliability.mjs';
@@ -42,12 +44,13 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json',
   '.geojson': 'application/geo+json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.geojson', '.svg']);
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.geojson', '.svg']);
 const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'strict-origin-when-cross-origin' };
 
 // ---- Static timetable ------------------------------------------------------------------------
@@ -326,9 +329,15 @@ const server = http.createServer(async (req, res) => {
     const summary = reliability.summary({ days: intParam(searchParams.get('days'), 7, 1, 30), routeId: searchParams.get('route') });
     return sendJson(req, res, 200, summary);
   }
-  if (pathname === '/api/weather' || pathname === '/api/radar') {
+  const extras = {
+    '/api/weather': getWeather,
+    '/api/radar': getRadar,
+    '/api/weather-alerts': getWeatherAlerts,
+    '/api/storms': () => getStormsFor(searchParams.get('basin')),
+  };
+  if (extras[pathname]) {
     try {
-      return sendJson(req, res, 200, await (pathname === '/api/weather' ? getWeather() : getRadar()));
+      return sendJson(req, res, 200, await extras[pathname]());
     } catch (err) {
       return sendJson(req, res, 502, { error: `Upstream unavailable: ${err.message}` });
     }

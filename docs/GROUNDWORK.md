@@ -320,6 +320,30 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
   - **The deploy itself:** neither workflow has run yet.
   - **History:** the Worker's reliability history starts empty; the local `data/reliability/` log isn't migrated.
 
+**Phase 8 — stops, weather and an installable app ✅ (built and tested locally)**
+
+- **Stop amenities:** the build reads Broward County's "Fixed Bus Stop" GIS layer (`bcgishub.broward.org/…/OpenData2/Fixed_Bus_Stop/FeatureServer/0`, 4,658 stops, 2,000 per query).
+  - **Matching:** every GTFS stop matched, 4,315 by `STOP_ID` and the rest by `STOP_CODE`.
+  - **What's kept:** shelter, bench, lighting, trash can and bike rack ("other" benches and trash cans count too), and the municipality. These are packed into one number per stop in `amenities.json` (17 KB gzipped).
+  - **Server quirk:** like BCT's feed server, the county server refuses curl's default User-Agent.
+  - **If it's down:** the build carries on without amenities.
+- **Wheelchair access:** the layer's `ADA_ACCESS` column is empty for every stop, so access comes from GTFS `wheelchair_boarding` (4,262 accessible, 738 not, 136 unknown in stops.txt).
+  - The two sources sometimes disagree in spirit: stop 0111 has every amenity but is marked not accessible. The panel shows what each source says.
+- **Directions:** the stop panel links to transit directions to the stop, in Apple Maps on Apple devices and Google Maps elsewhere.
+- **NWS alerts** (`/api/weather-alerts`): api.weather.gov alerts for county `FLC011` and zones `FLZ071`, `FLZ072` and `FLZ172` (inland, metro and coastal Broward), most severe first.
+  - **Where they show:** in the Alerts panel with a severity edge and expandable text. Severe and extreme ones also show as a header banner.
+  - **Fixed alongside:** the Alerts panel used to rebuild on every 10-second feed update, closing whatever a reader had expanded. It now rebuilds only when the alerts change. BCT restamps each alert's active period on every publish (start = now, end = now + 16.7 h), so periods are ignored in that comparison, and BCT's "Until …" times are not meaningful.
+- **Hurricane cones** (`/api/storms`): NHC's `CurrentStorms.json` lists active storms, and NOAA's `NHC_tropical_weather` map service gives each storm's cone, track and points as GeoJSON (via the Worker; it sends no CORS headers).
+  - **Visibility:** the map's camera is limited to the Broward area, so the header states whether Broward is inside each cone (point-in-polygon on the county's corners and middle).
+  - **Checked:** with Hurricane Vance (eastern Pacific, `?storms=all`), and with a made-up cone over Broward to check the drawing.
+- **Installable app:**
+  - `manifest.webmanifest` plus icons drawn by `scripts/make-icons.mjs`.
+  - `sw.js`: the app is network-first (revalidated, so deploys show at once), dated timetable builds and pinned libraries are cache-first (the two newest builds are kept), and the API and map tiles are never cached.
+  - The site build adds a version to `runtime-config.js`'s address, so a changed `WORKER_URL` isn't held back by Pages' 10-minute cache.
+  - **Checked:** the service worker's rules with a Node harness. The in-app browser can't register service workers from a local server, so registration itself is unchecked until the site is deployed.
+- **Tests:** 7 more in `test/integrations.test.mjs`: amenity packing, directions links, NWS parsing, storm features and point-in-polygon.
+- **Not checked:** the header banner with a real severe alert (none was active; the alerts that were active are Moderate and Minor).
+
 ---
 
 ## 7. Risks and open questions
@@ -342,6 +366,9 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 | `scripts/build-static.mjs` | BCT GTFS zip → `public/data/<folder>/…`, including the compact `schedule.json` | ✅ 44 routes, 5,981 trips, 4,793 stops, 166 shapes; schedule 1.9 MB (148 KB gzipped) |
 | `scripts/build-site.mjs` | Assembles `_site/` for GitHub Pages and writes `runtime-config.js` | ✅ served under a subpath against a local Worker |
 | `web/live.js` | Live snapshot (bearing, speed, delay, joins), stop departure boards, trip timelines, alerts, in the browser | ✅ against live feeds, plus 9 tests in `test/departures.test.mjs` and `test/schedule.test.mjs` |
+| `web/amenities.js` | Stop amenities and wheelchair access, packed into one number per stop | ✅ 2 tests; all 4,657 stops matched; stop panel checked in a browser |
+| `server/extras.mjs` (weather alerts, storms) | NWS alerts for Broward; NHC storm cones and whether Broward is inside | ✅ 4 tests; live alerts and Hurricane Vance checked through the Node server and `wrangler dev` |
+| `web/sw.js`, `web/manifest.webmanifest`, `scripts/make-icons.mjs` | Installable app: service worker, manifest, icons | ⚠️ caching rules checked in a Node harness; registration only checkable once deployed |
 | `web/gtfs-rt.js` | GTFS-RT decoder and the `/api/rt` bundle format | ✅ 0 mismatches against `gtfs-realtime-bindings` on live feeds; 5 tests |
 | `web/schedule.js` | Compact timetable: pack, unpack, calls at a stop | ✅ 2 tests, plus every departure test |
 | `web/api.js`, `web/runtime-config.js` | Where the API lives (same origin locally, the Worker on Pages) | ✅ |

@@ -7,10 +7,11 @@
 /* global maplibregl */
 import * as THREE from 'three';
 import { apiUrl, getApiJson } from './api.js';
+import { cityName, describeAmenities } from './amenities.js';
 import { unpackBundle } from './gtfs-rt.js';
 import { LiveFeed } from './live.js';
 import { createFrameMonitor, kmOutside, serviceArea } from './device.js';
-import { el, formatClock, formatDate, formatTime, icon, routeBadge, setTimeFormat } from './dom.js';
+import { el, formatClock, formatDate, formatTime, formatWhen, icon, routeBadge, setTimeFormat } from './dom.js';
 import { linkSearch, parseLink } from './links.js';
 import { createPanel } from './panel.js';
 import { MAX_SPEED_MPS, approach, positionAt, pushReport, reckonCap, updateSpeed } from './reckon.js';
@@ -149,6 +150,103 @@ async function updateRadar() {
     radarNoteEl.hidden = false;
   }
 }
+// ---- Weather alerts --------------------------------------------------------------------------
+
+// National Weather Service alerts for Broward go in the Alerts panel. Severe and extreme ones
+// (hurricane, tornado and flash flood warnings, say) also get a banner in the header.
+const weatherBannerEl = document.getElementById('weather-banner');
+let weatherAlerts = { alerts: [], moreUrl: null };
+
+async function refreshWeatherAlerts() {
+  try {
+    weatherAlerts = await getApiJson('/api/weather-alerts');
+  } catch {
+    return; // keep the last list rather than flash it away
+  }
+  sidebar?.setWeatherAlerts(weatherAlerts);
+  const top = weatherAlerts.alerts.find(a => a.severity === 'Extreme' || a.severity === 'Severe');
+  weatherBannerEl.hidden = !top;
+  if (top) {
+    const more = weatherAlerts.alerts.length - 1;
+    weatherBannerEl.replaceChildren(icon('warning'),
+      el('span', {}, el('strong', {}, top.event), top.ends ? ` until ${formatWhen(top.ends)}` : '', more > 0 ? ` · ${more} more` : ''));
+    weatherBannerEl.title = top.headline;
+  }
+}
+weatherBannerEl.addEventListener('click', () => sidebar?.show('alerts'));
+refreshWeatherAlerts();
+setInterval(refreshWeatherAlerts, 3 * 60_000);
+
+// ---- Installable app -------------------------------------------------------------------------
+
+// The service worker (web/sw.js) lets phones install the app and reopens it quickly. It's optional:
+// without it (old browsers, private windows) everything works the same.
+if ('serviceWorker' in navigator) {
+  const register = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if (document.readyState === 'complete') register();
+  else window.addEventListener('load', register);
+}
+
+// ---- Tropical storms -------------------------------------------------------------------------
+
+// The National Hurricane Center's forecast cone, track and points for active Atlantic storms, under
+// the route lines. NHC advises every 6 hours (3 when a storm threatens land), so checking every 15
+// minutes is plenty. ?storms=all in the URL shows every basin, for testing outside the season.
+const stormNoteEl = document.getElementById('storm-note');
+const STORM_LAYERS = ['storm-cone', 'storm-cone-edge', 'storm-track', 'storm-points', 'storm-labels'];
+const stormQuery = new URLSearchParams(location.search).get('storms') === 'all' ? '?basin=all' : '';
+let stormTimer = null;
+
+async function updateStorms() {
+  const show = visible => {
+    for (const id of STORM_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
+  };
+  if (!settings.storms) {
+    show(false);
+    stormNoteEl.hidden = true;
+    clearInterval(stormTimer);
+    stormTimer = null;
+    return;
+  }
+  stormTimer ??= setInterval(updateStorms, 15 * 60_000);
+  let data;
+  try {
+    data = await getApiJson(`/api/storms${stormQuery}`);
+  } catch {
+    return;
+  }
+  if (!settings.storms) return; // switched off while loading
+  if (!map.getSource('storms')) addStormLayers(data.features);
+  else map.getSource('storms').setData(data.features);
+  show(true);
+  stormNoteEl.hidden = data.storms.length === 0;
+  // The map only reaches a little past Broward, so say whether the cone covers the county.
+  const lines = data.storms.map(s => el('span', {},
+    el('a', { href: s.url, target: '_blank', rel: 'noopener' }, `${s.classification} ${s.name}`),
+    s.browardInCone ? ': Broward is inside the forecast cone' : ': its forecast cone does not reach Broward'));
+  stormNoteEl.replaceChildren(icon('hurricane'), el('span', { className: 'storm-lines' }, ...lines));
+}
+
+function addStormLayers(data) {
+  map.addSource('storms', { type: 'geojson', data, attribution: 'Storms: NOAA National Hurricane Center' });
+  const beforeId = ['radar', 'routes', 'stops', '3d-buildings'].find(id => map.getLayer(id));
+  const kind = k => ['==', ['get', 'kind'], k];
+  // Point colours by NHC's label: hurricane or major hurricane, tropical storm, depression, other.
+  const pointColor = ['match', ['get', 'label'], ['H', 'M'], '#dc2626', 'S', '#f59e0b', 'D', '#2563eb', '#6b7280'];
+  map.addLayer({ id: 'storm-cone', type: 'fill', source: 'storms', filter: kind('cone'), paint: { 'fill-color': '#dc2626', 'fill-opacity': 0.1 } }, beforeId);
+  map.addLayer({ id: 'storm-cone-edge', type: 'line', source: 'storms', filter: kind('cone'), paint: { 'line-color': '#dc2626', 'line-width': 1.5, 'line-dasharray': [3, 2] } }, beforeId);
+  map.addLayer({ id: 'storm-track', type: 'line', source: 'storms', filter: kind('track'), paint: { 'line-color': theme.label, 'line-width': 2 } }, beforeId);
+  map.addLayer({ id: 'storm-points', type: 'circle', source: 'storms', filter: kind('point'), paint: { 'circle-radius': 7, 'circle-color': pointColor, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 } }, beforeId);
+  map.addLayer({
+    id: 'storm-labels',
+    type: 'symbol',
+    source: 'storms',
+    filter: kind('point'),
+    layout: { 'text-field': ['get', 'time'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-allow-overlap': true },
+    paint: { 'text-color': theme.label, 'text-halo-color': theme.labelHalo, 'text-halo-width': 1.2 },
+  }, beforeId);
+}
+
 const isNarrow = () => !window.matchMedia('(min-width: 641px)').matches; // panels become bottom sheets
 // The sidebar column (to 412 px) and the detail panel (360 px from the right) both fit from here up;
 // below it, opening one closes the other.
@@ -348,18 +446,26 @@ async function addRouteLines(folder, beforeId) {
 
 // ---- Stops -----------------------------------------------------------------------------------
 
-const stopsById = new Map(); // stop_id -> { id, code, name, lon, lat, routes: [route_id] }
+const stopsById = new Map(); // stop_id -> { id, code, name, lon, lat, routes: [route_id], amenities, city }
 let shownStopsKey = null;
 
 // Stops as circles from zoom 14, with names from 16.5. Which stops show depends on the Stops setting
 // and the route filter (see updateStops). Returns stops.json, which the live feed needs too.
 async function addStops(folder, circlesBeforeId, labelsBeforeId) {
-  const [stops, stopRoutes] = await Promise.all([
+  const [stops, stopRoutes, amenities] = await Promise.all([
     getJson(`data/${folder}/stops.json`),
     getJson(`data/${folder}/stop_routes.json`),
+    // Shelters, benches and so on; optional, since builds before it existed don't have the file.
+    getJson(`data/${folder}/amenities.json`).catch(() => null),
   ]);
   for (const [id, code, lat, lon, name, locationType] of stops) {
-    if (locationType === 0 && stopRoutes[id]) stopsById.set(id, { id, code, name, lon, lat, routes: stopRoutes[id] });
+    if (locationType !== 0 || !stopRoutes[id]) continue;
+    const [mask, city] = amenities?.stops[id] ?? [0, null];
+    stopsById.set(id, {
+      id, code, name, lon, lat, routes: stopRoutes[id],
+      amenities: amenities ? describeAmenities(mask) : null,
+      city: city == null ? null : cityName(amenities.cities[city]),
+    });
   }
   map.addSource('stops', { type: 'geojson', data: stopFeatures(new Set()) });
   const active = ['==', ['get', 'shown'], true];
@@ -1026,7 +1132,10 @@ let pendingTripFocus = null; // trip id from a link whose bus hasn't appeared in
 const panel = createPanel(document.getElementById('panel'), {
   load(view) {
     if (!live) throw new Error('The timetable has not loaded.');
-    return view.kind === 'stop' ? live.stopDepartures(view.stopId) : live.tripStopTimes(view.tripId, { date: view.date });
+    if (view.kind === 'trip') return live.tripStopTimes(view.tripId, { date: view.date });
+    const board = live.stopDepartures(view.stopId);
+    const stop = stopsById.get(view.stopId);
+    return board && { ...board, amenities: stop?.amenities ?? null, city: stop?.city ?? null };
   },
   onStop: stopId => openStop(stopId),
   onTrip: (tripId, date, vehicleId) => openTrip(tripId, date, vehicleId),
@@ -1070,6 +1179,7 @@ function createShell() {
   });
   applyDisplaySettings();
   serviceBox = serviceArea([...stopsById.values()]);
+  sidebar.setWeatherAlerts(weatherAlerts);
 
   // Open what the link asked for: its route filter (else the saved one), then a stop or trip.
   const routeIdByNumber = new Map(routesList.map(r => [r.routeShortName, r.routeId]));
@@ -1110,6 +1220,7 @@ function changeSettings(patch) {
     sidebar.refresh();
   }
   if ('radar' in patch || 'timeFormat' in patch) updateRadar();
+  if ('storms' in patch) updateStorms();
   if ('vehicles' in patch) {
     setVehicleMode(settings.vehicles === '2d');
     sidebar.refresh(); // e.g. "Keep 3D" from the notice, while Settings is open
@@ -1179,6 +1290,7 @@ map.on('load', async () => {
     if (map.getLayer('routes') && map.getLayer('stops')) map.moveLayer('routes', 'stops');
     createShell();
     updateRadar(); // after the route lines exist, so the radar can go underneath them
+    updateStorms();
   } catch (err) {
     console.error(err);
     statusEl.textContent = 'Route data missing: run "npm run build:static". Buses will not follow their streets.';

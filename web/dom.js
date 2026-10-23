@@ -22,6 +22,8 @@ export const formatTime = s => clock.format(new Date(s * 1000));
 // The header clock: "Fri, Oct 23" and "3:27:05 PM", in Broward's time zone.
 export const formatDate = date => dateFormat.format(date);
 export const formatClock = date => clockSeconds.format(date);
+// "3:27 PM" today, else "Sat, Oct 24 3:27 PM".
+export const formatWhen = s => (formatDate(new Date(s * 1000)) === formatDate(new Date()) ? formatTime(s) : `${formatDate(new Date(s * 1000))} ${formatTime(s)}`);
 
 // el('div', { className: 'x' }, child, 'text', ...). null and false children are skipped.
 export function el(tag, props = {}, ...children) {
@@ -46,6 +48,15 @@ export const ICONS = {
   link: 'M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1',
   locate: 'M12 3v4M12 17v4M3 12h4M17 12h4M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8z',
   reliability: 'M4 20h16M7 16v-5M12 16V6M17 16v-8',
+  directions: 'M12 2.5l9.5 9.5-9.5 9.5L2.5 12zM9 15v-3.5h6M13 9l2.5 2.5L13 14',
+  wheelchair: 'M11 3.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3zM11 8v6h5l2 5M11 10.5h4.5M8.5 11.2A5 5 0 1 0 14.8 18',
+  shelter: 'M3 9l9-5 9 5M5 8v12M19 8v12M8 16h8',
+  bench: 'M4 11h16M5 15h14M6 15v4M18 15v4M6 11V8M18 11V8',
+  lights: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
+  bikeRack: 'M6 14a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM18 14a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 17l4-7h6l2 7M10 10l3 7H6M15 7h3',
+  hurricane: 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM15 12c0-5 2.5-8 6-8M9 12c0 5-2.5 8-6 8',
+  warning: 'M12 4L2.5 20h19L12 4zM12 10v4M12 17.5v.5',
   // Weather, by the `kind` the server reports.
   'clear-day': 'M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   'clear-night': 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z',

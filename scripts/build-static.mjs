@@ -7,6 +7,10 @@
 //   public/data/<folder>/stop_routes.json            { stop_id: [route_id] }
 //   public/data/<folder>/route_data/<route_id>.json  { s: { shape_id: [[lon, lat]] }, t: [[trip_id, headsign_index, shape_id, direction_id]], h: [headsign] }
 //   public/data/<folder>/schedule.json               every trip's stops and times, in the compact form web/schedule.js reads
+//   public/data/<folder>/amenities.json              { source, cities: [name], stops: { stop_id: [amenity bits (web/amenities.js), city index] } }
+//
+// Stop amenities come from Broward County's "Fixed Bus Stop" GIS layer (AMENITIES_URL). If it can't
+// be reached the build still succeeds, with wheelchair access from the GTFS only.
 //
 // BCT ships two service periods in one zip, so only services that run in the next HORIZON_DAYS are kept.
 //
@@ -15,10 +19,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { unzipSync, strFromU8 } from 'fflate';
 import { addDays, csvObjects, gtfsTimeToSeconds, readCsv, ymdInZone } from '../web/gtfs-util.js';
+import { cityName, encodeAmenities } from '../web/amenities.js';
 import { packSchedule } from '../web/schedule.js';
 
 // Producer URL since 2026-10-15 (the old broward.org/bct/documents/google_transit.zip now returns 403).
 const DEFAULT_SOURCE = 'https://www.browardcdn.org/api/public/content/5813c48c805a4851a24a52a26f6f487c';
+// Broward County GIS, published on ArcGIS Online as "Broward County Fixed Bus Stop".
+const AMENITIES_URL = process.env.BCT_AMENITIES_URL ?? 'https://bcgishub.broward.org/hbm/rest/services/OpenData2/Fixed_Bus_Stop/FeatureServer/0';
+const USER_AGENT = 'broward-transit-3d/0.1'; // both servers refuse curl's and Wget's default User-Agents
 const HORIZON_DAYS = 14;
 const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -133,13 +141,41 @@ const stops = allStops
     Number(s.location_type || 0), s.platform_code || '', s.parent_station || '',
   ]);
 
-// 6. Write everything out.
+// 6. Amenities: the GIS layer matched by stop_id, else stop_code, plus GTFS wheelchair access.
+let gisStops = [];
+try {
+  gisStops = await fetchFeatures(AMENITIES_URL);
+} catch (err) {
+  console.warn(`Stop amenities unavailable (${err.message}); continuing without them.`);
+}
+const gisById = new Map(gisStops.map(a => [String(a.STOP_ID ?? '').trim(), a]));
+const gisByCode = new Map(gisStops.map(a => [String(a.STOP_CODE ?? '').trim(), a]));
+const cities = [];
+const cityIndex = new Map();
+const amenities = {};
+let matched = 0;
+for (const s of allStops) {
+  if (!stopRoutes.has(s.stop_id)) continue;
+  const gis = gisById.get(s.stop_id) ?? gisByCode.get(s.stop_code) ?? null;
+  if (gis) matched++;
+  const city = cityName(gis?.MUNICIPALITY);
+  if (city && !cityIndex.has(city)) cityIndex.set(city, cities.push(city) - 1);
+  const mask = encodeAmenities(gis, s.wheelchair_boarding);
+  if (mask || city) amenities[s.stop_id] = [mask, city ? cityIndex.get(city) : null];
+}
+
+// 7. Write everything out.
 const folder = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
 const outDir = path.join(ROOT, 'public', 'data', folder);
 await fs.mkdir(path.join(outDir, 'route_data'), { recursive: true });
 
 await writeJson(path.join(outDir, 'routes.json'), routes);
 await writeJson(path.join(outDir, 'stops.json'), stops);
+await writeJson(path.join(outDir, 'amenities.json'), {
+  source: gisStops.length ? { name: 'Broward County Fixed Bus Stop (Broward County GIS)', url: AMENITIES_URL, records: gisStops.length } : null,
+  cities,
+  stops: amenities,
+});
 await writeJson(path.join(outDir, 'stop_routes.json'), Object.fromEntries([...stopRoutes].map(([id, set]) => [id, [...set].sort()])));
 for (const route of routes) {
   const headsigns = [];
@@ -183,12 +219,29 @@ for (const old of builds.slice(0, -2)) await fs.rm(path.join(ROOT, 'public', 'da
 const shapePointCount = [...shapes.values()].reduce((n, line) => n + line.length, 0);
 console.log(`Feed ${feedInfo.feed_version ?? '(no feed_info)'} | services ${[...activeServices].join(', ') || 'all'}`);
 console.log(`${routes.length} routes, ${trips.length} trips, ${stops.length} stops, ${shapes.size} shapes (${shapePointCount} points)`);
+console.log(`Amenities: ${matched} of ${stopRoutes.size} stops matched in the GIS layer (${gisStops.length} records)`);
 console.log(`Wrote public/data/${folder}/`);
 
 async function download(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'broward-transit-3d/0.1' } });
+  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
   if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
+}
+
+// Every feature's attributes from an ArcGIS feature layer, a page (the server's limit, 2,000) at a time.
+async function fetchFeatures(layerUrl) {
+  const out = [];
+  for (let offset = 0; ; ) {
+    const url = `${layerUrl}/query?where=1%3D1&outFields=*&returnGeometry=false&orderByFields=OBJECTID&resultOffset=${offset}&f=json`;
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`GET ${layerUrl} -> HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error.message ?? 'ArcGIS error');
+    const page = (json.features ?? []).map(f => f.attributes);
+    out.push(...page);
+    if (!json.exceededTransferLimit || !page.length) return out;
+    offset += page.length;
+  }
 }
 
 function writeJson(file, value) {

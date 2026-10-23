@@ -1,7 +1,7 @@
 // The left-hand rail and the panels it opens: routes (with the route filter), search, alerts and
 // settings. It reaches the map only through the callbacks, so it knows nothing of MapLibre or three.js.
 import { getApiJson } from './api.js';
-import { el, formatDate, formatTime, icon, routeBadge } from './dom.js';
+import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 
 const PANELS = [
   { name: 'routes', label: 'Routes' },
@@ -22,6 +22,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
   let filter = null; // Set of route ids shown, or null for all
   let counts = new Map(); // route id -> buses running now
   let alerts = [];
+  let weather = { alerts: [], moreUrl: null }; // National Weather Service alerts for Broward
 
   const titleEl = el('h2', {});
   const closeButton = el('button', { type: 'button', className: 'icon-button close', title: 'Close', ariaLabel: 'Close panel' }, '×');
@@ -161,18 +162,42 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
   function buildAlerts() {
     const note = el('p', { className: 'panel-note' });
     const list = el('div', {});
+    let shownKey = null;
     return {
       node: el('div', {}, note, list),
-      sync() {
+      // Called on every feed update (every 10 s); the cards are only rebuilt when the alerts change,
+      // so an opened "Details" or "stops affected" stays open.
+      sync({ force = false } = {}) {
+        // BCT restamps every alert's active period on each publish (start = now), so periods are
+        // left out of the comparison.
+        const key = JSON.stringify([weather.alerts, alerts.map(({ activePeriods, ...a }) => a), filter && [...filter]]);
+        if (key === shownKey && !force) return;
+        shownKey = key;
         const shown = filter ? alerts.filter(a => !a.routes.length || a.routes.some(r => filter.has(r.routeId))) : alerts;
-        note.textContent = !alerts.length
+        const transit = !alerts.length
           ? 'No service alerts right now.'
           : filter && shown.length !== alerts.length
-            ? `${shown.length} of ${alerts.length} alerts affect the routes you're showing.`
-            : `${alerts.length} active ${alerts.length === 1 ? 'alert' : 'alerts'} from Broward County Transit.`;
-        list.replaceChildren(...shown.map(alertCard));
+            ? `${shown.length} of ${alerts.length} service alerts affect the routes you're showing.`
+            : `${alerts.length} active service ${alerts.length === 1 ? 'alert' : 'alerts'} from Broward County Transit.`;
+        const n = weather.alerts.length;
+        note.textContent = n ? `${n} weather ${n === 1 ? 'alert' : 'alerts'} for Broward from the National Weather Service. ${transit}` : transit;
+        list.replaceChildren(...weather.alerts.map(weatherCard), ...shown.map(alertCard));
       },
     };
+  }
+
+  function weatherCard(a) {
+    // NWS text is hard-wrapped at about 70 characters, with blank lines between paragraphs.
+    const paragraphs = text => (text ?? '').split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).map(p => el('p', {}, p));
+    return el('article', { className: `alert nws severity-${a.severity.toLowerCase()}` },
+      el('h3', {}, icon('warning'), a.event),
+      el('p', { className: 'status' }, [a.severity !== 'Unknown' && a.severity, a.ends && `until ${formatWhen(a.ends)}`].filter(Boolean).join(', ')),
+      (a.description || a.instruction) && el('details', {},
+        el('summary', {}, 'Details'),
+        ...paragraphs(a.description),
+        ...(a.instruction ? [el('h4', {}, 'What to do'), ...paragraphs(a.instruction)] : [])),
+      el('p', { className: 'status' }, weather.moreUrl ? el('a', { href: weather.moreUrl, target: '_blank', rel: 'noopener' }, a.sender) : a.sender),
+    );
   }
 
   function alertCard(a) {
@@ -331,6 +356,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
         choices('Buses', 'vehicles', [['auto', 'Automatic: 3D, or 2D if the map runs slowly'], ['3d', '3D'], ['2d', '2D (lighter on older devices)']]),
         toggle('3D buildings', 'buildings'),
         toggle('Rain radar', 'radar'),
+        toggle('Hurricane forecast cones (when there is an Atlantic storm)', 'storms'),
         choices('Stops', 'stops', [['active-routes', 'On routes with a bus running'], ['all', 'All stops'], ['none', 'Hidden']]),
         toggle('Stop names', 'stopNames'),
         choices('Times', 'timeFormat', [['12h', '12-hour'], ['24h', '24-hour']]),
@@ -340,6 +366,12 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
           el('p', {}, 'Modelled on aklcommute.nz. Basemap: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors.')),
       ),
     };
+  }
+
+  function updateCount() {
+    const n = alerts.length + weather.alerts.length;
+    alertCount.hidden = n === 0;
+    alertCount.textContent = String(n);
   }
 
   return {
@@ -356,7 +388,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
     // Re-renders text that depends on settings, e.g. after the 12/24-hour setting changes or the
     // buses switch to 2D on their own.
     refresh() {
-      sections.alerts?.sync();
+      sections.alerts?.sync({ force: true });
       if (sections.settings) {
         sections.settings = buildSettings();
         if (openName === 'settings') bodyEl.replaceChildren(sections.settings.node);
@@ -366,9 +398,14 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
     update(next) {
       counts = next.counts;
       alerts = next.alerts;
-      alertCount.hidden = alerts.length === 0;
-      alertCount.textContent = String(alerts.length);
+      updateCount();
       sections.routes?.sync();
+      sections.alerts?.sync();
+    },
+    // { alerts, moreUrl } from /api/weather-alerts.
+    setWeatherAlerts(next) {
+      weather = next;
+      updateCount();
       sections.alerts?.sync();
     },
   };

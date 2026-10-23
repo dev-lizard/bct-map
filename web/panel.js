@@ -1,6 +1,7 @@
 // The detail panel: a stop's departure board or a trip's timeline, refreshed with every feed poll.
 // load(view) returns what to show (LiveFeed.stopDepartures or tripStopTimes in web/live.js).
 import { el, formatTime, icon, routeBadge } from './dom.js';
+import { directionsUrl } from './links.js';
 
 // "On time", "4 min late", "3 min early", from seconds of delay.
 function delayText(delay) {
@@ -86,10 +87,12 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onFollow, isFol
     refresh({ scrollToNext: true });
   }
 
-  function renderStop({ stop, routes, departures }) {
+  // amenities: describeAmenities() from web/amenities.js, or null if unknown. city: the stop's municipality.
+  function renderStop({ stop, routes, departures, amenities = null, city = null }) {
     titleEl.replaceChildren(
       el('h2', {}, stop.name),
-      el('div', { className: 'detail-sub' }, el('span', {}, `Stop ${stop.code || stop.id}`), ...routes.map(routeBadge)),
+      el('div', { className: 'detail-sub' }, el('span', {}, `Stop ${stop.code || stop.id}${city ? ` · ${city}` : ''}`), ...routes.map(routeBadge)),
+      facilities(stop, amenities),
     );
     const nowS = Date.now() / 1000;
     const rows = departures.map(d => {
@@ -117,6 +120,26 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onFollow, isFol
     });
     bodyEl.replaceChildren(...(rows.length ? rows : [el('p', { className: 'empty' }, 'No departures in the next 90 minutes.')]),
       el('p', { className: 'footnote' }, liveDot(), 'Live prediction. Other times are from the timetable.'));
+  }
+
+  // What's at the stop (shelter, bench, …), wheelchair access, and a link for directions to it.
+  function facilities(stop, amenities) {
+    const chip = (name, text, className = '') => el('span', { className: `facility ${className}`.trim() }, icon(name), text);
+    const row = el('div', { className: 'facilities' });
+    if (amenities?.wheelchair === true) row.append(chip('wheelchair', 'Wheelchair accessible'));
+    else if (amenities?.wheelchair === false) row.append(chip('wheelchair', 'Not wheelchair accessible', 'missing'));
+    for (const a of amenities?.have ?? []) row.append(chip(a.key, a.label));
+    const directions = el('a', {
+      className: 'small-button directions',
+      href: directionsUrl(stop, navigator.userAgent),
+      target: '_blank',
+      rel: 'noopener',
+      title: 'Transit directions to this stop',
+    }, icon('directions'), 'Directions');
+    row.append(directions);
+    const lacking = amenities?.lack ?? [];
+    return el('div', {}, row,
+      lacking.length > 0 && el('div', { className: 'status muted' }, `No ${lacking.map(a => a.label.toLowerCase()).join(', ')}`));
   }
 
   function renderTrip(trip, scrollToNext) {

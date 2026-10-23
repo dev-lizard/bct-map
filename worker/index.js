@@ -3,6 +3,8 @@
 //   GET /api/rt            BCT's live feeds as one protobuf bundle (web/gtfs-rt.js), at most 10 s old
 //   GET /api/weather       current conditions in Fort Lauderdale
 //   GET /api/radar         time and tile URL of the latest rain radar
+//   GET /api/weather-alerts  active National Weather Service alerts for Broward
+//   GET /api/storms        active Atlantic storms' forecast cones (?basin=all for every basin)
 //   GET /api/reliability   on-time performance by route, or by hour (?route=ID&days=7)
 //   GET /api/health        ok / degraded / down, with the checks behind it (503 when down)
 // A Cron Trigger runs the Recorder (recorder.js) every minute; it logs on-time performance in a
@@ -12,7 +14,9 @@
 // sees roughly one request per 10 s from each isolate the Worker is running in: a handful.
 import { packBundle } from '../web/gtfs-rt.js';
 import { fetchAllFeeds, rollHistory } from '../server/bct-feed.mjs';
-import { loadRadar, loadWeather, RADAR_TTL_MS, WEATHER_TTL_MS } from '../server/extras.mjs';
+import {
+  ALERTS_TTL_MS, loadRadar, loadStorms, loadWeather, loadWeatherAlerts, RADAR_TTL_MS, STORMS_TTL_MS, WEATHER_TTL_MS,
+} from '../server/extras.mjs';
 
 export { Recorder } from './recorder.js';
 
@@ -69,6 +73,9 @@ function memo(load, ttlMs) {
 }
 const getWeather = memo(loadWeather, WEATHER_TTL_MS);
 const getRadar = memo(loadRadar, RADAR_TTL_MS);
+const getWeatherAlerts = memo(loadWeatherAlerts, ALERTS_TTL_MS);
+const getStorms = memo(loadStorms, STORMS_TTL_MS);
+const getAllStorms = memo(() => loadStorms({ basins: 'all' }), STORMS_TTL_MS);
 
 const recorder = env => env.RECORDER.get(env.RECORDER.idFromName('bct'));
 
@@ -99,6 +106,8 @@ export default {
       }
       if (pathname === '/api/weather') return json(await getWeather());
       if (pathname === '/api/radar') return json(await getRadar());
+      if (pathname === '/api/weather-alerts') return json(await getWeatherAlerts());
+      if (pathname === '/api/storms') return json(await (searchParams.get('basin') === 'all' ? getAllStorms() : getStorms()));
       if (pathname === '/api/reliability') {
         const days = intParam(searchParams.get('days'), 7, 1, 30);
         return json(await recorder(env).summary({ days, routeId: searchParams.get('route') }));
@@ -107,7 +116,7 @@ export default {
         const report = await recorder(env).health();
         return json(report, report.status === 'down' ? 503 : 200);
       }
-      if (pathname === '/') return json({ name: 'Broward Transit 3D API', endpoints: ['/api/rt', '/api/weather', '/api/radar', '/api/reliability', '/api/health'] });
+      if (pathname === '/') return json({ name: 'Broward Transit 3D API', endpoints: ['/api/rt', '/api/weather', '/api/radar', '/api/weather-alerts', '/api/storms', '/api/reliability', '/api/health'] });
       return json({ error: 'Not found' }, 404);
     } catch (err) {
       return json({ error: `Upstream unavailable: ${err.message}` }, 502);
