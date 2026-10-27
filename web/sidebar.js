@@ -1,22 +1,18 @@
 // The left-hand rail and the panels it opens: routes (with the route filter), search, alerts, a
-// table of live buses, reliability, analytics and settings. It reaches the map only through the
-// callbacks, so it knows nothing of MapLibre or three.js.
+// table of live buses, analytics (including on-time reliability) and settings. It reaches the map
+// only through the callbacks, so it knows nothing of MapLibre or three.js.
 import { createAnalytics } from './analytics.js';
-import { getApiJson } from './api.js';
 import { createBusTable } from './buses.js';
-import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
+import { el, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 
 const PANELS = [
   { name: 'routes', label: 'Routes' },
   { name: 'search', label: 'Search' },
   { name: 'alerts', label: 'Alerts' },
   { name: 'buses', label: 'Buses' },
-  { name: 'reliability', label: 'Reliability' },
   { name: 'analytics', label: 'Analytics' },
   { name: 'settings', label: 'Settings' },
 ];
-// Fewer timepoint departures than this and a percentage is more noise than signal.
-const FEW_SAMPLES = 20;
 const MAX_BADGES = 6;
 // Panels with tables get a wider column on large screens.
 const WIDE = new Set(['buses', 'analytics']);
@@ -64,8 +60,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
     search: buildSearch,
     alerts: buildAlerts,
     buses: () => createBusTable({ route, onBus }),
-    reliability: buildReliability,
-    analytics: () => createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap, onCanceled, onBunching }),
+    analytics: () => createAnalytics({ routes, route, stopName, stop, tripInfo, stopPairRoutes, onStop, onTrip, onSpeedMap, onCanceled, onBunching, settings }),
     settings: buildSettings,
   };
   const section = name => (sections[name] ??= builders[name]());
@@ -244,116 +239,6 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
       end && el('p', { className: 'status' }, `Until ${formatTime(end)}`),
     );
   }
-
-  // ---- Reliability ---------------------------------------------------------------------------
-
-  // On-time performance from the API's log of timepoint departures: every route, or one route by
-  // hour of day. Reloaded each time the panel opens. The API knows route ids only; names and
-  // colours come from the timetable already loaded here.
-  function buildReliability() {
-    const node = el('div', {});
-    let routeId = null; // null: all routes
-    let request = 0;
-
-    async function load() {
-      const ticket = ++request;
-      node.replaceChildren(el('p', { className: 'panel-note' }, 'Loading…'));
-      try {
-        const data = await getApiJson(routeId ? `/api/reliability?route=${encodeURIComponent(routeId)}` : '/api/reliability');
-        if (ticket !== request) return;
-        const route = id => routesById.get(id) ?? { routeId: id, routeShortName: id, routeColor: '#888888', routeTextColor: '#FFFFFF' };
-        if (routeId) data.route = route(routeId);
-        else data.routes = data.routes.map(r => ({ ...route(r.routeId), ...r }));
-        node.replaceChildren(...(routeId ? routeView(data) : allRoutesView(data)));
-      } catch (err) {
-        if (ticket === request) node.replaceChildren(el('p', { className: 'empty' }, `Couldn't load reliability: ${err.message}`));
-      }
-    }
-
-    function allRoutesView(data) {
-      if (!data.samples) {
-        return [el('p', { className: 'panel-note' }, 'No departures recorded yet. Each time a bus leaves a timepoint, its GPS-measured time is logged; check back in a few minutes.')];
-      }
-      const rows = data.routes.map(r => {
-        const row = el('button', { type: 'button', className: 'rel-row' },
-          routeBadge(r), stackedBar(r), el('span', { className: 'rel-pct' }, pctText(r)));
-        row.setAttribute('aria-label', `Route ${r.routeShortName}: ${summaryText(r)}. Show by hour.`);
-        row.addEventListener('click', () => {
-          routeId = r.routeId;
-          load();
-        });
-        return row;
-      });
-      return [
-        intro(data),
-        el('div', { className: 'rel-row rel-total' }, el('strong', {}, 'All'), stackedBar(data), el('strong', { className: 'rel-pct' }, pctText(data))),
-        legend(),
-        ...rows,
-      ];
-    }
-
-    function routeView(data) {
-      const back = el('button', { type: 'button', className: 'link' }, '‹ All routes');
-      back.addEventListener('click', () => {
-        routeId = null;
-        load();
-      });
-      const head = el('div', { className: 'rel-head' }, back,
-        el('div', { className: 'rel-title' }, routeBadge(data.route), ' ', routesById.get(data.route.routeId)?.routeLongName ?? ''));
-      if (!data.samples) return [head, el('p', { className: 'panel-note' }, 'No departures recorded for this route yet.')];
-      const hours = data.byHour.map(h => {
-        const row = el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, hourText(h.hour)), stackedBar(h), el('span', { className: 'rel-pct' }, pctText(h)));
-        row.setAttribute('aria-label', `${hourText(h.hour)}: ${summaryText(h)}`);
-        return row;
-      });
-      return [
-        head,
-        intro(data),
-        el('div', { className: 'rel-row rel-total' }, el('strong', {}, 'All'), stackedBar(data), el('strong', { className: 'rel-pct' }, pctText(data))),
-        legend(),
-        el('p', { className: 'panel-note rel-sub' }, 'By hour of departure'),
-        ...hours,
-      ];
-    }
-
-    function intro(data) {
-      let since = '';
-      if (data.collectingSince) {
-        const started = new Date(data.collectingSince * 1000);
-        const day = formatDate(started) === formatDate(new Date()) ? 'today' : formatDate(started);
-        since = ` Recording since ${formatTime(data.collectingSince)} ${day}.`;
-      }
-      return el('p', { className: 'panel-note' },
-        `Departure times at timepoints, measured from bus GPS. On time means no more than 1 minute early or 5 minutes late. Last ${data.windowDays} days, ${data.samples.toLocaleString('en-US')} ${data.samples === 1 ? 'departure' : 'departures'}.${since}`);
-    }
-
-    return { node, sync: load };
-  }
-
-  // Early, on-time and late shares as one bar, in that order. Colour is backed by the legend, the
-  // percentage beside the bar and each segment's tooltip.
-  function stackedBar(s) {
-    const bar = el('div', { className: 'rel-bar', ariaHidden: 'true' });
-    for (const [key, label] of [['early', 'Early'], ['onTime', 'On time'], ['late', 'Late']]) {
-      const pct = s[`${key}Pct`];
-      if (!pct) continue;
-      const seg = el('span', { className: `rel-seg rel-${key}`, title: `${label}: ${pct}% of ${s.samples}` });
-      seg.style.flexGrow = String(pct);
-      bar.append(seg);
-    }
-    return bar;
-  }
-
-  function legend() {
-    return el('div', { className: 'rel-legend' },
-      ...[['early', 'Early'], ['onTime', 'On time'], ['late', 'Late']].map(([key, label]) =>
-        el('span', {}, el('span', { className: `rel-swatch rel-${key}` }), label)),
-      el('span', { className: 'muted' }, `* under ${FEW_SAMPLES} departures`));
-  }
-
-  const pctText = s => (s.samples < FEW_SAMPLES ? `${s.onTimePct}%*` : `${s.onTimePct}%`);
-  const summaryText = s => `${s.onTimePct}% on time, ${s.earlyPct}% early, ${s.latePct}% late, from ${s.samples} departures`;
-  const hourText = h => (settings.timeFormat === '24h' ? `${String(h).padStart(2, '0')}:00` : `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`);
 
   // ---- Settings ------------------------------------------------------------------------------
 

@@ -443,6 +443,24 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **Checked:** with a made-up track along route 72's real shape (no real event had been captured yet). The ghosts follow Oakland Park Blvd and the gap closes from 1.2 to 0.8 mi as it plays.
 - **Also:** OpenFreeMap's dark style asks for a "wood-pattern" image it doesn't have, and MapLibre warned for every tile (thousands of console messages). A transparent stand-in is now added on `styleimagemissing`.
 
+**Phase 14 — service, prediction, headway and schedule analytics; one Analytics panel ✅ (built and tested locally)**
+
+- **Recording** (`server/service.mjs`): one value per day (`service_days` in the Worker, `data/service/` in Node), plus a small state saved every tick (pending predictions, the last bus at each timepoint, trips in progress).
+  - **Service delivered:** trips a bus was seen on (vehicle feed or GPS), and the minutes the recorder ran. Once a trip is half an hour over, it counts as ran, canceled (BCT said so), missed without notice (no bus, no notice, and the recorder watched at least 90% of its run), or not judged.
+  - **Prediction accuracy:** BCT's prediction for each timepoint, taken the first time the bus is 0–2, 2–5, 5–10, 10–20 and 20–30 minutes away, and scored when GPS sees it pass. Accurate means 1 minute early to 3 minutes late; a bus that came early counts separately, since riders following the prediction miss it.
+  - **Headways:** at timepoints, on service timetabled 20 minutes apart or less, the actual and timetabled gap between consecutive buses. They're summed so the excess wait can be worked out: Σh²/2Σh, actual minus timetabled.
+  - **Schedule fit:** a trip's running time from its first to its last timepoint GPS saw (at least 80% of its timetabled time), recorded 10 minutes after it stops moving.
+  - **Tests:** 5 in `test/service.test.mjs`.
+- **Panel** (`web/analytics.js`): rewritten as one panel with shared controls.
+  - **Shared controls:** a period and a route picker apply to all eight tabs (Service, On time, Predictions, Headways, Schedule, Speeds, Bunching, Weather).
+  - **Tables:** sort by any column, with "show all" on long lists.
+  - **Clicking:** route badges and route rows narrow every tab to that route, stops open their departures, trips open their timetable, canceled trips their story, and bunching events their replay.
+  - **CSV:** each tab exports its data.
+  - **The rail:** the Reliability button became the On time tab, so the rail is down to six buttons.
+- **Checked:** every tab in a browser, the route picker following a click, and `/api/service` from the Node server and `wrangler dev`.
+  - Predictions were scored within minutes (97 on 29 routes).
+  - Headways, run times and service delivered need recording to have covered whole trips, so they fill in over the first hours. BCT's frequent service is routes 1, 18 and 19 (gaps of 20 minutes or less), plus some trips on 22, 72 and 114.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---
@@ -467,6 +485,7 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 | `scripts/build-static.mjs` | BCT GTFS zip → `public/data/<folder>/…`, including the compact `schedule.json` | ✅ 44 routes, 5,981 trips, 4,793 stops, 166 shapes; schedule 1.9 MB (148 KB gzipped) |
 | `scripts/build-site.mjs` | Assembles `_site/` for GitHub Pages and writes `runtime-config.js` | ✅ served under a subpath against a local Worker |
 | `web/live.js` | Live snapshot (bearing, speed, delay, joins), stop departure boards, trip timelines, alerts, in the browser | ✅ against live feeds, plus 9 tests in `test/departures.test.mjs` and `test/schedule.test.mjs` |
+| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit | ✅ 5 tests; predictions scored live; `/api/service` checked in Node and `wrangler dev` |
 | `server/segments.mjs`, `web/speeds.js` | Running times between stops from GPS; speeds, congestion and the map layer | ✅ 9 tests; recorded live and checked in a browser |
 | `server/analytics.mjs`, `server/analytics-log.mjs` | Bunching, cancellations, adherence by weather; the Node server's event log | ✅ 8 tests; checked on live data and in the panel |
 | `web/buses.js`, `web/analytics.js`, `web/csv.js` | Buses table and Analytics panel, with CSV downloads | ✅ checked in a browser at 800 and 1,280 px |

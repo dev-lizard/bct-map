@@ -7,6 +7,7 @@
 //   GET /api/analytics                     bunching, cancellations and adherence by weather (?days=7)
 //   GET /api/segments                      measured bus running times between stops (?days=7)
 //   GET /api/bunching-track                both buses' GPS tracks around a bunching event (?key=date|leader|follower)
+//   GET /api/service                       service delivered, prediction accuracy, headways, schedule fit (?days=7)
 //   GET /api/weather                       current conditions in Fort Lauderdale
 //   GET /api/radar                         time and tile URL of the latest rain radar
 //   GET /api/weather-alerts                active National Weather Service alerts for Broward
@@ -36,6 +37,7 @@ import { healthReport } from './health.mjs';
 import { ReliabilityLog } from './reliability.mjs';
 import { runningTimeByWeather, SegmentLog } from './segments.mjs';
 import { TrackLog, trackKey } from './tracks.mjs';
+import { ServiceLog } from './service.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const WEB_DIR = path.join(ROOT, 'web');
@@ -125,13 +127,15 @@ console.log(`Analytics: ${analytics.bunching.length} bunching events on record`)
 
 // Logs kept as one JSON file per day, saved every DAILY_SAVE_MS and at shutdown: running times
 // between stops (server/segments.mjs) in data/segments/, canceled trips (server/cancellations.mjs)
-// in data/cancellations/, and bunching replays (server/tracks.mjs) in data/tracks/.
+// in data/cancellations/, bunching replays (server/tracks.mjs) in data/tracks/, and service
+// analytics (server/service.mjs) in data/service/.
 const DAILY_KEEP_DAYS = 31;
 const DAILY_SAVE_MS = 10 * 60_000;
 const segments = new SegmentLog({ timezone });
 const cancellations = new CancellationLog({ timezone });
 const tracks = new TrackLog();
-const dailyLogs = [[segments, path.join(ROOT, 'data', 'segments')], [cancellations, path.join(ROOT, 'data', 'cancellations')], [tracks, path.join(ROOT, 'data', 'tracks')]];
+const service = new ServiceLog({ timezone });
+const dailyLogs = [[service, path.join(ROOT, 'data', 'service')], [segments, path.join(ROOT, 'data', 'segments')], [cancellations, path.join(ROOT, 'data', 'cancellations')], [tracks, path.join(ROOT, 'data', 'tracks')]];
 for (const [log, dir] of dailyLogs) {
   await fs.mkdir(dir, { recursive: true });
   for (const file of (await fs.readdir(dir)).filter(f => /^\d{8}\.json$/.test(f))) log.load(file.slice(0, 8), await fs.readFile(path.join(dir, file), 'utf8'));
@@ -238,6 +242,9 @@ async function refresh() {
     bunches = newBunches.length;
     const alerts = alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null);
     canceled = cancellations.observe({ liveTrips: trips.values(), trips: schedule.trips, feedTs, busOnTrip, alerts, passages });
+    service.observe({ vehicles, liveTrips: trips.values(), passages, trips: schedule.trips, nowS: Date.now() / 1000 });
+  } else {
+    service.observe({ vehicles, passages, trips: schedule.trips, nowS: Date.now() / 1000 });
   }
   const kb = n => `${Math.round(n / 1024)} KB`;
   const errors = feedErrors.length ? ` (partial: ${feedErrors.join('; ')})` : '';
@@ -392,6 +399,10 @@ const server = http.createServer(async (req, res) => {
     const { bunching } = analytics.summary({ days });
     bunching.recent = bunching.recent.map(e => ({ ...e, track: tracks.status(trackKey(e)) }));
     return sendJson(req, res, 200, { windowDays: days, collectingSince: Math.floor(analyticsSince), bunching, cancellations: cancellations.summary({ days }), weather });
+  }
+  if (pathname === '/api/service') {
+    const days = intParam(searchParams.get('days'), 7, 1, 30);
+    return sendJson(req, res, 200, service.summary({ days, schedule: staticData.schedule, canceled: cancellations.keys({ days }) }));
   }
   if (pathname === '/api/bunching-track') {
     const track = tracks.get(searchParams.get('key') ?? '');

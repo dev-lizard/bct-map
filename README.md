@@ -33,8 +33,19 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 - **Buses:** drawn in 3D, or as lighter 2D dots with heading arrows (Settings → Buses). "Automatic" switches to 2D if the map runs slowly.
 - **Header:** Broward time and current weather (Open-Meteo). Settings → Rain radar adds the US NEXRAD radar layer.
 - **Buses (rail):** every bus in the feed as a sortable, filterable table: route, bus number, destination, next stop, schedule adherence and report age. Click a row to show the bus; download it as CSV.
-- **Analytics (rail):** bus speeds between stops measured from GPS, with the stretches where congestion costs the most time, the slowest stretches, running time in wet weather, and a map layer coloured by speed; bus bunching (by route, by hour, and each event, with a replay of the two buses as "ghosts" on the map), schedule adherence in dry, rainy and stormy hours compared with dry weather at the same hours, and canceled trips (filter by route, and open any trip to see when it was due and canceled, the bus and BCT alert, the gap riders faced, and whether GPS saw a bus run it anyway), over today, 7 or 30 days, each downloadable as CSV.
-- **Reliability (rail):** on-time performance by route and by hour, from each timepoint departure, timed from bus GPS (the moment the bus passes the stop, or pulls away from its first stop). Locally the log is `data/ontime/`; when deployed, a Cloudflare Durable Object.
+- **Analytics (rail):** one period (today, 7 or 30 days) and one route (or all) apply to every tab; tables sort by any column, rows open the route, stop or trip they describe, and every tab downloads as CSV.
+  - **Service:** the share of scheduled trips that ran, trips missed without notice, and canceled trips (each one explorable: when it was due and canceled, the bus and BCT alert, the gap riders faced, whether GPS saw it run anyway).
+  - **On time:** GPS-timed departures from timepoints (1 minute early to 5 late), by route or by hour.
+  - **Predictions:** how close BCT's predicted arrival was, by how far ahead it was made (0–2 up to 20–30 minutes), and how often the bus came early.
+  - **Headways:** on frequent service, the extra wait riders have because buses arrive unevenly (excess wait time), by route, time of day and timepoint.
+  - **Schedule:** each route's and each trip's running time against the timetable, to spot schedules that are too tight or too loose.
+  - **Speeds:** bus speeds and congestion between stops from GPS, with a map layer. **Bunching:** events by route and hour, each with a replay of the two buses as "ghosts" on the map. **Weather:** on time and running time in dry, rainy and stormy hours.
+  - **Service:** the share of scheduled trips that ran, trips missed without notice, and canceled trips (each one explorable: when it was due and canceled, the bus and BCT alert, the gap riders faced, whether GPS saw it run anyway).
+  - **On time:** GPS-timed departures from timepoints (1 minute early to 5 late), by route or by hour.
+  - **Predictions:** how close BCT's predicted arrival was, by how far ahead it was made (0–2 up to 20–30 minutes), and how often the bus came early.
+  - **Headways:** on frequent service, the extra wait riders have because buses arrive unevenly (excess wait time), by route, time of day and timepoint.
+  - **Schedule:** each route's and each trip's running time against the timetable, to spot schedules that are too tight or too loose.
+  - **Speeds:** bus speeds and congestion between stops from GPS, with a map layer. **Bunching:** events by route and hour, each with a replay of the two buses as "ghosts" on the map. **Weather:** on time and running time in dry, rainy and stormy hours.
 - **Rail (left):** Routes (filter which routes are shown, or pick one to zoom to it), Search (stops by name or number, routes by number or name), Alerts, and Settings. Settings and the route filter are saved in your browser.
 - **Theme:** day or night is picked by the time in Broward, unless you choose one in Settings. `?theme=day` or `?theme=night` in the URL overrides both.
 - **Links:** the URL always describes the current view, so you can bookmark or share it. The camera is in the hash (`#zoom/lat/lon/bearing/pitch`); the query string can add `?routes=01,22`, `?stop=0210`, or `?trip=<trip_id>&date=YYYYMMDD`. The detail panel's link button copies it.
@@ -59,6 +70,7 @@ Served by the Cloudflare Worker (`worker/`) when deployed, and by `server/index.
 |---|---|
 | `GET /api/rt` | BCT's vehicle positions, trip updates and alerts as raw protobuf in one bundle, plus up to three older vehicle feeds (format in `web/gtfs-rt.js`). `X-Server-Time` gives the server's clock. |
 | `GET /api/segments` | Measured bus running times for every stretch between stops, per time of day, plus running time by weather (`?days=7`, up to 30) |
+| `GET /api/service` | Service delivered (trips run, missed without notice, canceled), prediction accuracy by lead time, headway sums for excess wait, and running times by trip (`?days=7`, up to 30) |
 | `GET /api/bunching-track` | Both buses' GPS tracks from 15 minutes before to 15 after a bunching event (`?key=<service date>|<leading trip>|<following trip>`) |
 | `GET /api/analytics` | Bunching events, canceled trips, and on-time stats by weather (`?days=7`, up to 30) |
 | `GET /api/reliability` | On-time / early / late shares at timepoints, by route, or by hour for one route (`?route=BCT22&days=7`) |

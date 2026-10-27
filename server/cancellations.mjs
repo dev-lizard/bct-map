@@ -138,6 +138,14 @@ export class CancellationLog {
     return dropped;
   }
 
+  // "date|trip id" of every trip marked canceled in the last `days` service days.
+  keys({ days = 7, nowS = Date.now() / 1000 } = {}) {
+    const from = addDays(ymdInZone(new Date(nowS * 1000), this.timezone), -(days - 1));
+    const out = new Set();
+    for (const [date, day] of this.#days) if (date >= from) for (const id of day.keys()) out.add(`${date}|${id}`);
+    return out;
+  }
+
   // The last `days` service days: totals, by route, and every record (newest first).
   summary({ days = 7, nowS = Date.now() / 1000 } = {}) {
     const from = addDays(ymdInZone(new Date(nowS * 1000), this.timezone), -(days - 1));

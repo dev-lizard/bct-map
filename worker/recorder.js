@@ -30,6 +30,7 @@ import { alertsByTrip, CancellationLog } from '../server/cancellations.mjs';
 import { healthReport } from '../server/health.mjs';
 import { SegmentLog } from '../server/segments.mjs';
 import { TrackLog, trackKey } from '../server/tracks.mjs';
+import { ServiceLog } from '../server/service.mjs';
 import { addDelay, emptyCount, summarize, timepointDepartures } from '../server/ontime.mjs';
 
 const TIMEZONE = 'America/New_York';
@@ -45,6 +46,7 @@ export class Recorder extends DurableObject {
   #bunching = []; // bunching events (server/analytics.mjs), last KEEP_DAYS service days
   #cancellations = new CancellationLog({ timezone: TIMEZONE }); // one row per day in cancel_days
   #tracks = new TrackLog(); // bunching replays, one row per day in track_days
+  #service = new ServiceLog({ timezone: TIMEZONE }); // service analytics, one row per day in service_days
   #eventSeen = { bunch: new Map() }; // service date -> Set of event keys
   #schedule = null;
   #stops = null; // stop id -> { lat, lon }, for measuring running times
@@ -71,6 +73,7 @@ export class Recorder extends DurableObject {
       CREATE TABLE IF NOT EXISTS segment_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS cancel_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS track_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS service_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
       DROP TABLE IF EXISTS canceled;
     `);
   }
@@ -107,11 +110,13 @@ export class Recorder extends DurableObject {
         liveTrips: live.trips.values(), trips: this.#schedule.trips, feedTs: live.feedTs, busOnTrip,
         alerts: alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null), passages,
       });
+      this.#service.observe({ vehicles, liveTrips: live.trips.values(), passages, trips: this.#schedule.trips, nowS });
     }
     this.#prune();
     this.#saveDaily();
     this.#set('tracking', { buses: this.#segments.exportTracking(), progress: this.#cancellations.exportProgress() });
     this.#set('trackBuffer', this.#tracks.exportState());
+    this.#set('serviceState', this.#service.exportState());
     this.#set('tick', status);
     return status;
   }
@@ -157,6 +162,13 @@ export class Recorder extends DurableObject {
   async segments({ days = 7 } = {}) {
     this.#load();
     return this.#segments.query({ days });
+  }
+
+  // Service delivered, prediction accuracy, headways and schedule fit for the last `days` days.
+  async service({ days = 7 } = {}) {
+    this.#load();
+    await this.#ensureSchedule();
+    return this.#service.summary({ days, schedule: this.#schedule, canceled: this.#cancellations.keys({ days }) });
   }
 
   // Both buses' GPS tracks around one bunching event, or null.
@@ -252,7 +264,7 @@ export class Recorder extends DurableObject {
   // Writes the days whose running-time totals or cancellations changed: one row each.
   #saveDaily() {
     this.ctx.storage.transactionSync(() => {
-      for (const [log, table] of [[this.#segments, 'segment_days'], [this.#cancellations, 'cancel_days'], [this.#tracks, 'track_days']]) {
+      for (const [log, table] of [[this.#segments, 'segment_days'], [this.#cancellations, 'cancel_days'], [this.#tracks, 'track_days'], [this.#service, 'service_days']]) {
         for (const date of log.dirty) {
           const json = log.serialize(date);
           if (json) this.sql.exec(`INSERT INTO ${table} (date, data) VALUES (?, ?) ON CONFLICT (date) DO UPDATE SET data = excluded.data`, date, json);
@@ -275,6 +287,8 @@ export class Recorder extends DurableObject {
     this.sql.exec('DELETE FROM cancel_days WHERE date < ?', countsFrom);
     this.#tracks.prune(countsFrom);
     this.sql.exec('DELETE FROM track_days WHERE date < ?', countsFrom);
+    this.#service.prune(countsFrom);
+    this.sql.exec('DELETE FROM service_days WHERE date < ?', countsFrom);
     this.#bunching = this.#bunching.filter(e => e.date >= countsFrom);
     this.#saveDaily();
     const segmentsFrom = addDays(today, -(SEGMENTS_KEEP_DAYS - 1));
@@ -311,6 +325,8 @@ export class Recorder extends DurableObject {
     for (const r of this.sql.exec('SELECT date, data FROM cancel_days')) this.#cancellations.load(r.date, r.data);
     for (const r of this.sql.exec('SELECT date, data FROM track_days')) this.#tracks.load(r.date, r.data);
     this.#tracks.importState(this.#get('trackBuffer'));
+    for (const r of this.sql.exec('SELECT date, data FROM service_days')) this.#service.load(r.date, r.data);
+    this.#service.importState(this.#get('serviceState'));
     const tracking = this.#get('tracking');
     this.#segments.importTracking(tracking?.buses);
     this.#cancellations.importProgress(tracking?.progress);

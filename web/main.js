@@ -1249,7 +1249,7 @@ function createShell() {
       fitRoute(routeId);
     },
     onStop: stopId => openStop(stopId),
-    onTrip: tripId => openTrip(tripId),
+    onTrip: (tripId, date = null) => openTrip(tripId, date),
     onBus(v) {
       if (v.tripId) openTrip(v.tripId, null, v.id);
       else selectBus(v.id);
