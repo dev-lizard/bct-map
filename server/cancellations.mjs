@@ -146,7 +146,7 @@ export class CancellationLog {
     return out;
   }
 
-  // The last `days` service days: totals, by route, and every record (newest first).
+  // The last `days` service days: totals, by route, by date, and every record (newest first).
   summary({ days = 7, nowS = Date.now() / 1000 } = {}) {
     const from = addDays(ymdInZone(new Date(nowS * 1000), this.timezone), -(days - 1));
     const rows = [];
@@ -159,6 +159,7 @@ export class CancellationLog {
       ranAnyway: rows.filter(r => r.stopsPassed > 0).length,
       restored: rows.filter(r => r.restoredAt != null).length,
       byRoute: [...byRoute].map(([routeId, trips]) => ({ routeId, trips })).sort((a, b) => b.trips - a.trips),
+      byDate: Object.fromEntries([...this.#days].filter(([date]) => date >= from).map(([date, day]) => [date, day.size])),
       recent: rows.slice(0, MAX_RECENT),
     };
   }

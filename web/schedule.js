@@ -110,6 +110,30 @@ export class Schedule {
     return calls;
   }
 
+  // The routes calling at each stop: Map stop id -> Set of route ids.
+  routesByStop() {
+    const out = new Map();
+    for (const { rows, trips } of this.#patterns) {
+      const routes = new Set(trips.map(({ trip }) => trip.r));
+      for (const [, id] of rows) for (const r of routes) (out.get(id) ?? out.set(id, new Set()).get(id)).add(r);
+    }
+    return out;
+  }
+
+  // How many buses call at each stop on a day running `services` (a Set of service ids), not
+  // counting trips that end there: Map stop id -> count.
+  departuresByStop(services) {
+    const out = new Map();
+    for (const { rows, trips } of this.#patterns) {
+      const n = trips.filter(({ trip }) => services.has(trip.sv)).length;
+      if (!n) continue;
+      rows.forEach(([, id], i) => {
+        if (i < rows.length - 1) out.set(id, (out.get(id) ?? 0) + n);
+      });
+    }
+    return out;
+  }
+
   // The last date any service in the timetable runs (YYYYMMDD), so health can warn before it lapses.
   get end() {
     const ends = Object.values(this.calendar).map(c => c.end);

@@ -30,7 +30,7 @@ import { alertsByTrip, CancellationLog } from '../server/cancellations.mjs';
 import { healthReport } from '../server/health.mjs';
 import { SegmentLog } from '../server/segments.mjs';
 import { TrackLog, trackKey } from '../server/tracks.mjs';
-import { ServiceLog } from '../server/service.mjs';
+import { findHubs, ServiceLog } from '../server/service.mjs';
 import { addDelay, emptyCount, summarize, timepointDepartures } from '../server/ontime.mjs';
 
 const TIMEZONE = 'America/New_York';
@@ -89,7 +89,7 @@ export class Recorder extends DurableObject {
     } catch (err) {
       status.errors.push(`Timetable: ${err.message}`);
     }
-    const feeds = await fetchAllFeeds(['vehiclePositions', 'tripUpdates', 'alerts'], { base: this.env.BCT_BASE || undefined });
+    const feeds = await fetchAllFeeds(['vehiclePositions', 'tripUpdates', 'alerts'], { base: this.env.BCT_BASE || undefined, contractBase: this.env.CONTRACT_FEED_BASE || null });
     status.errors.push(...feeds.errors);
     if (feeds.vehiclePositions) {
       status.okAt = nowS;
@@ -349,6 +349,7 @@ export class Recorder extends DurableObject {
     const [schedule, stops] = await Promise.all([get(`data/${folder}/schedule.json`), get(`data/${folder}/stops.json`)]);
     this.#schedule = new Schedule(schedule);
     this.#stops = new Map(stops.map(([id, , lat, lon]) => [id, { lat, lon }]));
+    this.#service.setHubs(findHubs(stops, this.#schedule), this.#schedule);
     this.#folder = folder;
   }
 

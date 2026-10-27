@@ -310,17 +310,15 @@ export function unpackBundle(bytes, { decode = true, history = true } = {}) {
   return out;
 }
 
-// The feed header's timestamp, without decoding the rest.
+// The feed header's timestamp, without decoding the rest. A merged feed (server/bct-feed.mjs) has a
+// header from each part; as when decoding, the last one wins.
 export function feedTimestamp(bytes) {
   const r = new Reader(bytes);
+  let ts = null;
   while (r.pos < r.end) {
     const key = r.uint();
-    if (key >>> 3 === 1 && (key & 7) === 2) {
-      let ts = null;
-      r.message().read({ 3: y => { ts = y.uint(); } });
-      return ts;
-    }
-    r.skip(key & 7);
+    if (key >>> 3 === 1 && (key & 7) === 2) r.message().read({ 3: y => { ts = y.uint(); } });
+    else r.skip(key & 7);
   }
-  return null;
+  return ts;
 }

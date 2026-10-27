@@ -10,7 +10,7 @@ import { apiUrl, getApiJson } from './api.js';
 import { cityName, describeAmenities } from './amenities.js';
 import { unpackBundle } from './gtfs-rt.js';
 import { LiveFeed } from './live.js';
-import { serviceDayStart } from './gtfs-util.js';
+import { addDays, serviceDayStart, servicesOn, ymdInZone } from './gtfs-util.js';
 import { routesByStopPair, SPEED_BANDS } from './speeds.js';
 import { canceledTripDetails } from './canceled.js';
 import { createReplay } from './replay.js';
@@ -1206,6 +1206,19 @@ const panel = createPanel(document.getElementById('panel'), {
 // ---- Bus speed layer (Analytics → Show on map) -----------------------------------------------
 
 let stopPairRoutesCache = null;
+let shelterStopsCache = null;
+
+// Every stop with what's there and how many buses leave it on a weekday (the next one from today),
+// for the Analytics "Shelters" tab.
+function shelterStops() {
+  if (shelterStopsCache || !live) return shelterStopsCache ?? [];
+  let date = ymdInZone(new Date(), live.timezone);
+  const weekday = d => new Date(Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8))).getUTCDay();
+  while (weekday(date) === 0 || weekday(date) === 6) date = addDays(date, 1);
+  const buses = live.schedule.departuresByStop(servicesOn(date, live.calendar, live.exceptions));
+  shelterStopsCache = [...stopsById.values()].map(s => ({ ...s, buses: buses.get(s.id) ?? 0 }));
+  return shelterStopsCache;
+}
 
 // Stretches between stops coloured by measured bus speed (web/speeds.js), above the route lines and
 // below the stops and buses. data: GeoJSON, or null to remove the layer.
@@ -1258,6 +1271,7 @@ function createShell() {
     stopName: stopId => stopsById.get(stopId)?.name ?? null,
     stop: stopId => stopsById.get(stopId) ?? null,
     stopPairRoutes: () => (stopPairRoutesCache ??= live ? routesByStopPair(live.trips) : new Map()),
+    shelterStops,
     onSpeedMap: showSpeedLayer,
     async onBunching(event) {
       const key = `${event.date}|${event.leader}|${event.follower}`;

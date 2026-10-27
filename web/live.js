@@ -13,6 +13,8 @@ import { toSchedule } from './schedule.js';
 const MIN_MOVE_FOR_BEARING_M = 15;
 // Vehicles missing from the feed for this long are forgotten.
 const FORGET_AFTER_MS = 10 * 60 * 1000;
+// A report this much older than its feed is a parked bus's last position, not a live bus.
+const MAX_REPORT_AGE_S = 30 * 60;
 // Departure boards look at timetabled times this far before the window too, to catch late buses.
 const LATE_LOOKBACK_S = 60 * 60;
 
@@ -30,13 +32,25 @@ export function summarizeTripUpdates(feed, { trips, timezone, stops = null, nowS
     const startDate = update.trip.startDate || ymdInZone(new Date(feedTs * 1000), timezone);
     // BCT sometimes gives a stop's code where the timetable has a longer id ("3533" for
     // "3533_Merged_2"), so the stop id comes from the timetable row with the same stop_sequence.
+    // The contracted routes' feed numbers stops one lower than the timetable, so a stop whose id
+    // doesn't match its sequence's row is placed by its id instead, searching on from the last.
     const rowBySeq = scheduled ? new Map(scheduled.s.map(r => [r[0], r])) : null;
-    const calls = (update.stopTimeUpdate ?? []).map(s => ({
-      seq: s.stopSequence,
-      stopId: rowBySeq?.get(s.stopSequence)?.[1] ?? s.stopId,
-      time: Number(s.arrival?.time ?? s.departure?.time) || null,
-      delay: s.arrival?.delay ?? s.departure?.delay ?? null,
-    }));
+    let from = 0;
+    const calls = (update.stopTimeUpdate ?? []).map(s => {
+      let index = scheduled ? scheduled.s.indexOf(rowBySeq.get(s.stopSequence)) : -1;
+      if (scheduled && s.stopId && (index < 0 || !sameStop(scheduled.s[index][1], s.stopId))) {
+        const byId = scheduled.s.findIndex((r, i) => i >= from && sameStop(r[1], s.stopId));
+        if (byId >= 0) index = byId;
+      }
+      if (index >= 0) from = index + 1;
+      const row = index >= 0 ? scheduled.s[index] : null;
+      return {
+        seq: row?.[0] ?? s.stopSequence,
+        stopId: row?.[1] ?? s.stopId,
+        time: Number(s.arrival?.time ?? s.departure?.time) || null,
+        delay: s.arrival?.delay ?? s.departure?.delay ?? null,
+      };
+    });
     // The next stop the bus hasn't reached yet; BCT also lists stops it has already passed.
     const next = calls.find(s => s.time && s.time >= feedTs - 30) ?? calls.at(-1) ?? null;
     const nextStop = next && stops?.get(next.stopId);
@@ -60,6 +74,9 @@ export function summarizeTripUpdates(feed, { trips, timezone, stops = null, nowS
   }
   return { feedTs, trips: index };
 }
+
+// A timetable stop id and a feed's: the same, or the feed's is the code of a merged stop.
+const sameStop = (timetableId, feedId) => timetableId === feedId || timetableId.startsWith(`${feedId}_`);
 
 // Seconds late (+) or early (-) at `stop`, from its predicted time against the timetable.
 function delayAgainstSchedule(scheduled, startDate, stop, timezone) {
@@ -234,11 +251,16 @@ export class LiveFeed {
     });
   }
 
+  // Each bus's report, leaving out ones much older than the feed: the contracted routes' feed keeps
+  // a parked bus's last position for days.
   * #reports(feed) {
+    const feedTs = Number(feed.header.timestamp);
     for (const entity of feed.entity ?? []) {
       const v = entity.vehicle;
       if (!v?.position) continue;
-      yield { id: v.vehicle?.id ?? entity.id, v, timestamp: Number(v.timestamp) || Number(feed.header.timestamp) };
+      const timestamp = Number(v.timestamp) || feedTs;
+      if (feedTs && feedTs - timestamp > MAX_REPORT_AGE_S) continue;
+      yield { id: v.vehicle?.id ?? entity.id, v, timestamp };
     }
   }
 

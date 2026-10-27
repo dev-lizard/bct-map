@@ -104,7 +104,7 @@ const countBy = (rows, key) => {
   return counts;
 };
 
-// events: every recorded bunching event (any order). -> totals, by route, by hour, and the latest.
+// events: every recorded bunching event (any order). -> totals, by route, by hour, by date, and the latest.
 export function summarizeBunching(events, { days, timezone, nowS = Date.now() / 1000 }) {
   const today = ymdInZone(new Date(nowS * 1000), timezone);
   const rows = events.filter(e => inWindow(e.date, days, today));
@@ -113,6 +113,7 @@ export function summarizeBunching(events, { days, timezone, nowS = Date.now() / 
     total: rows.length,
     byRoute: [...countBy(rows, e => e.routeId)].map(([routeId, events]) => ({ routeId, events })).sort((a, b) => b.events - a.events),
     byHour: [...countBy(rows, e => Number(hourFormat.format(e.at * 1000)))].map(([hour, events]) => ({ hour, events })).sort((a, b) => a.hour - b.hour),
+    byDate: Object.fromEntries(countBy(rows, e => e.date)),
     recent: rows.sort((a, b) => b.at - a.at).slice(0, MAX_RECENT),
     rule: { maxS: BUNCHED_MAX_S, share: BUNCHED_SHARE, minScheduledS: MIN_SCHEDULED_GAP_S },
   };
@@ -159,6 +160,7 @@ export function weatherByHour(csv) {
 // counts: [{ date (calendar, YYYYMMDD), hour, n, early, late, sumDelay }] of timepoint departures.
 // Each weather class gets its on-time stats, and the difference from dry weather at the same hours
 // of the day (weighted by that class's departures), so a rainy rush hour is compared with a dry one.
+// byDate: each date's rainy and heavy-rain hours, for the days the counts cover.
 export function weatherImpact(counts, weather) {
   const byClass = new Map(WEATHER_CLASSES.map(c => [c.wx, { total: emptyCount(), hours: new Set(), byHour: new Map() }]));
   let unmatched = 0;
@@ -175,9 +177,15 @@ export function weatherImpact(counts, weather) {
     merge(cls.byHour.get(c.hour), c);
   }
   const dry = byClass.get('dry');
+  const byDate = Object.fromEntries([...new Set(counts.map(c => c.date))].map(date => [date, [0, 0]]));
+  for (const [key, wx] of weather) {
+    const wet = byDate[key.slice(0, 8)];
+    if (wet && wx !== 'dry') wet[wx === 'heavy' ? 1 : 0]++;
+  }
   return {
     onTimeWindow: { earlyS: ON_TIME_EARLY_S, lateS: ON_TIME_LATE_S },
     unmatchedSamples: unmatched,
+    byDate, // date -> [rain hours, heavy-rain hours]
     classes: WEATHER_CLASSES.map(({ wx, label }) => {
       const cls = byClass.get(wx);
       return { wx, label, hours: cls.hours.size, ...rates(cls.total), vsDry: wx === 'dry' ? null : versusDry(cls.byHour, dry.byHour) };

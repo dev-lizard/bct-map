@@ -13,6 +13,7 @@ enabled = true
 # Your GitHub Pages site, where the Worker reads the timetable. The Deploy Worker workflow sets
 # it from the repository name; set it here only if you deploy from your own machine.
 PAGES_URL = "https://YOUR-GITHUB-USER.github.io/YOUR-REPO"
+# Secret, not set here: CONTRACT_FEED_BASE, the contracted routes' feeds (docs/DEPLOY.md, step 5b).
 
 # Every minute: record on-time performance and check BCT's feeds (worker/recorder.js).
 [triggers]

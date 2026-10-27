@@ -44,10 +44,11 @@ const json = (value, status = 200, extra = {}) => new Response(JSON.stringify(va
 // Plain data only is kept between requests: Workers can't share an in-flight fetch across them.
 let rt = null; // { at, parts, body, errors }
 let bctBase; // from env: BCT's own address unless .dev.vars overrides it
+let contractBase; // from env: the contracted routes' feeds (a secret), or null
 
 async function latestBundle() {
   if (rt && Date.now() - rt.at < RT_TTL_MS) return rt;
-  const feeds = await fetchAllFeeds(undefined, { base: bctBase });
+  const feeds = await fetchAllFeeds(undefined, { base: bctBase, contractBase });
   if (!feeds.vehiclePositions) {
     if (rt) return { ...rt, errors: feeds.errors }; // BCT is down: keep serving the last good bundle
     throw new Error(feeds.errors.join('; '));
@@ -95,6 +96,7 @@ function intParam(value, fallback, min, max) {
 export default {
   async fetch(request, env) {
     bctBase = env.BCT_BASE || undefined;
+    contractBase = env.CONTRACT_FEED_BASE || null;
     const { pathname, searchParams } = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (request.method !== 'GET' && request.method !== 'HEAD') return json({ error: 'Method not allowed' }, 405);

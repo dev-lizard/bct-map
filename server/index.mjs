@@ -37,7 +37,7 @@ import { healthReport } from './health.mjs';
 import { ReliabilityLog } from './reliability.mjs';
 import { runningTimeByWeather, SegmentLog } from './segments.mjs';
 import { TrackLog, trackKey } from './tracks.mjs';
-import { ServiceLog } from './service.mjs';
+import { findHubs, ServiceLog } from './service.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const WEB_DIR = path.join(ROOT, 'web');
@@ -70,8 +70,9 @@ async function loadStaticData() {
   const schedule = new Schedule(JSON.parse(await fs.readFile(path.join(DATA_DIR, folder, 'schedule.json'), 'utf8')));
   const stopRows = JSON.parse(await fs.readFile(path.join(DATA_DIR, folder, 'stops.json'), 'utf8'));
   const stops = new Map(stopRows.map(([id, , lat, lon]) => [id, { lat, lon }]));
-  console.log(`Static data ${folder}: ${Object.keys(schedule.trips).length} trips`);
-  return { folder, schedule, stops };
+  const hubs = findHubs(stopRows, schedule);
+  console.log(`Static data ${folder}: ${Object.keys(schedule.trips).length} trips, ${hubs.length} transfer hubs`);
+  return { folder, schedule, stops, hubs };
 }
 
 // Runs scripts/build-static.mjs in its own process: parsing BCT's 80 MB stop_times.txt takes about
@@ -135,6 +136,7 @@ const segments = new SegmentLog({ timezone });
 const cancellations = new CancellationLog({ timezone });
 const tracks = new TrackLog();
 const service = new ServiceLog({ timezone });
+service.setHubs(staticData.hubs, staticData.schedule);
 const dailyLogs = [[service, path.join(ROOT, 'data', 'service')], [segments, path.join(ROOT, 'data', 'segments')], [cancellations, path.join(ROOT, 'data', 'cancellations')], [tracks, path.join(ROOT, 'data', 'tracks')]];
 for (const [log, dir] of dailyLogs) {
   await fs.mkdir(dir, { recursive: true });
@@ -176,6 +178,7 @@ async function rebuild() {
   try {
     const result = await runBuild();
     staticData = await loadStaticData();
+    service.setHubs(staticData.hubs, staticData.schedule);
     lastBuild = { ok: true, at: new Date().toISOString(), seconds: result.seconds };
     console.log(`[build] ${result.summary} (${result.seconds} s), now serving the new timetable`);
   } catch (err) {
@@ -211,7 +214,7 @@ let feedErrors = [];
 let bundle = { parts: null, body: null, gz: null };
 
 async function refresh() {
-  const feeds = await fetchAllFeeds();
+  const feeds = await fetchAllFeeds(undefined, { contractBase: process.env.CONTRACT_FEED_BASE || null });
   feedErrors = feeds.errors;
   if (!feeds.vehiclePositions) throw new Error(feeds.errors.join('; '));
   const previous = bundle.parts;

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { excessWait, ServiceLog } from '../server/service.mjs';
+import { excessWait, findHubs, ServiceLog } from '../server/service.mjs';
+import { toSchedule } from '../web/schedule.js';
 import { serviceDayStart } from '../web/gtfs-util.js';
 
 const TZ = 'America/New_York';
@@ -61,7 +62,7 @@ test('schedule fit: running time from first to last timepoint seen, once the tri
   log.observe({ passages: [pass('T1', 3, day + 8 * H + 780)], trips, nowS: day + 8 * H + 780 });
   assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 8 * H + 800 }).runtime.byTrip, {}); // not over yet
   log.observe({ trips, nowS: day + 8 * H + 780 + 700 });
-  assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 12 * H }).runtime.byTrip, { T1: ['R1', 1, 720, 600, 1] }); // 12 min against 10: over by 10%+
+  assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 12 * H }).runtime.byTrip, { T1: ['R1', 1, 720, 600, 1, 1, 60, 0] }); // 12 min against 10: over by 10%+; left 1 min late
 });
 
 test('state and days round-trip through storage', () => {
@@ -71,4 +72,61 @@ test('state and days round-trip through storage', () => {
   for (const d of log.dates()) copy.load(d, log.serialize(d));
   copy.importState(JSON.parse(JSON.stringify(log.exportState())));
   assert.deepEqual(copy.summary({ days: 1, schedule, nowS: day + 12 * H }), log.summary({ days: 1, schedule, nowS: day + 12 * H }));
+});
+
+test('schedule fit also keeps the start delay; on-time and delay by timepoint feed trends', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  log.observe({ passages: [pass('T1', 1, day + 8 * H + 180)], trips, nowS: day + 8 * H + 180 }); // left A 3 min late
+  log.observe({ passages: [pass('T1', 3, day + 8 * H + 840)], trips, nowS: day + 8 * H + 840 }); // C 4 min late
+  log.observe({ trips, nowS: day + 8 * H + 840 + 700 });
+  const s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
+  assert.deepEqual(s.runtime.byTrip.T1, ['R1', 1, 660, 600, 0, 1, 180, 1]); // a late start, 1 min lost on the way
+  assert.deepEqual(s.delays, { 'R1|0|A': [1, 180, 0], 'R1|0|C': [1, 240, 600] });
+  assert.deepEqual(s.daily[0].ontime.R1, [2, 0, 0, 420]); // both within 5 min late: on time
+});
+
+test('transfers: a timetabled connection at a hub, made or missed by the real times', () => {
+  // R1 ends at hub stop H1 at 8:10; R2 leaves hub stop H2 at 8:15 and 8:30. Both stops are in station P.
+  const hubTrips = {
+    T1: { r: 'R1', d: 0, h: 'Hub', sv: 'WK', s: [[1, 'A', 8 * H, 1], [2, 'H1', 8 * H + 600, 1]] },
+    U1: { r: 'R2', d: 0, h: 'Out', sv: 'WK', s: [[1, 'H2', 8 * H + 900, 1], [2, 'Z', 8 * H + 1500, 1]] },
+    U2: { r: 'R2', d: 0, h: 'Out', sv: 'WK', s: [[1, 'H2', 8 * H + 1800, 1], [2, 'Z', 8 * H + 2400, 1]] },
+  };
+  const sched = toSchedule({ meta: { timezone: TZ }, calendar, exceptions: [], trips: hubTrips });
+  const stopRows = [['P', '', 0, 0, 'Hub Station', 1, '', ''], ['H1', '', 0, 0, 'Bay 1', 0, '', 'P'], ['H2', '', 0, 0, 'Bay 2', 0, '', 'P']];
+  const hubs = findHubs(stopRows, sched, 2);
+  assert.deepEqual(hubs, [{ id: 'P', name: 'Hub Station', stops: ['H1', 'H2'] }]);
+  const run = (arrive, depart) => {
+    const log = new ServiceLog({ timezone: TZ });
+    log.setHubs(hubs, sched);
+    log.observe({ passages: [pass('T1', 2, day + 8 * H + arrive)], trips: sched.trips, nowS: day + 8 * H + arrive });
+    log.observe({ passages: [pass('U1', 1, day + 8 * H + depart)], trips: sched.trips, nowS: day + 8 * H + depart });
+    return log.summary({ days: 1, schedule: sched, nowS: day + 12 * H }).transfers.byHub.P['R1>R2'];
+  };
+  assert.deepEqual(run(660, 840), [1, 1, 180, 0, 0]); // in at 8:11, out at 8:14: made
+  assert.deepEqual(run(840, 900), [1, 0, 0, 900, 1]); // in at 8:14, out at 8:15: missed, 15 more minutes
+  assert.deepEqual(run(960, 900), [1, 0, 0, 900, 1]); // the connection left before the bus came in
+});
+
+test('feed quality: stale reports, GPS gaps, timetable-only predictions, and buses that vanish', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  const feed = (t, reportT) => ({ header: { timestamp: t }, entity: [{ id: 'bus1', vehicle: { vehicle: { id: 'bus1' }, trip: { tripId: 'T1', startDate: '20261022' }, position: { latitude: 26.1, longitude: -80.1 }, timestamp: reportT } }] });
+  log.observe({ vehicles: feed(day + 8 * H, day + 8 * H), trips, nowS: day + 8 * H });
+  log.observe({ vehicles: feed(day + 8 * H + 600, day + 8 * H + 360), trips, nowS: day + 8 * H + 600 }); // 6 min since the last: a gap, and 4 min old: stale
+  const live = predicted => ({ tripId: 'T2', startDate: '20261022', canceled: false, nextStop: { seq: 3 }, bySeq: new Map([[3, predicted]]) });
+  log.observe({ liveTrips: [live(day + 8 * H + 1200)], trips, nowS: day + 8 * H + 700 }); // exactly the timetable
+  log.observe({ liveTrips: [live(day + 8 * H + 1290)], trips, nowS: day + 8 * H + 760 });
+  // L1 seen leaving its first timepoint, then nothing, with 30 timetabled minutes to go: it dropped out.
+  const longTrips = { ...trips, L1: { r: 'R1', d: 0, sv: 'WK', s: [[1, 'A', 8 * H, 1], [2, 'C', 8 * H + 1800, 1]] } };
+  log.observe({ passages: [pass('L1', 1, day + 8 * H + 770)], trips: longTrips, nowS: day + 8 * H + 770 });
+  for (let t = 830; t <= 1500; t += 60) log.observe({ trips: longTrips, nowS: day + 8 * H + t });
+  const f = log.summary({ days: 1, schedule, nowS: day + 12 * H }).feed;
+  assert.deepEqual(f.byDate[0], { date: '20261022', reports: 2, stale: 1, gaps: 1, dropouts: 1, predictedTrips: 2, timetableOnly: 1 });
+  assert.deepEqual(f.byRoute.R1, [1, 1, 2, 1]);
+});
+
+test('schedule: routes and weekday departures by stop', () => {
+  const sched = toSchedule({ meta: { timezone: TZ }, calendar, exceptions: [], trips });
+  assert.deepEqual([...sched.routesByStop().get('B')], ['R1']);
+  assert.deepEqual(Object.fromEntries(sched.departuresByStop(new Set(['WK']))), { A: 3, B: 3 }); // C is where they end
 });

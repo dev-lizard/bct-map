@@ -93,3 +93,19 @@ test('bundle: feeds and older vehicle feeds in one response; a missing feed is n
   assert.deepEqual(out.history.map(f => f.header.timestamp), [10, 20]);
   assert.equal(unpackBundle(packBundle({})).vehiclePositions, null);
 });
+
+test('merged feeds: every entity, and the last header, read the same way by both decoders', async () => {
+  const { mergeFeeds } = await import('../server/bct-feed.mjs');
+  const { feedTimestamp } = await import('../web/gtfs-rt.js');
+  const encode = obj => FeedMessage.encode(FeedMessage.fromObject(obj)).finish();
+  const bus = id => ({ id, vehicle: { position: { latitude: 26.1, longitude: -80.1 }, vehicle: { id } } });
+  const contractor = encode({ header: { gtfsRealtimeVersion: '1.0', timestamp: 1792700100 }, entity: [bus('c1'), bus('c2')] });
+  const bct = encode({ header: { gtfsRealtimeVersion: '2.0', timestamp: 1792700000 }, entity: [bus('b1')] });
+  const merged = mergeFeeds(contractor, bct);
+  const ours = decodeFeed(merged);
+  const official = FeedMessage.toObject(FeedMessage.decode(merged), { longs: Number, enums: String });
+  assert.deepEqual(ours.entity.map(e => e.id), ['c1', 'c2', 'b1']);
+  assert.equal(ours.header.timestamp, 1792700000); // BCT's, which comes last
+  assert.equal(official.header.timestamp, 1792700000);
+  assert.equal(feedTimestamp(merged), 1792700000);
+});

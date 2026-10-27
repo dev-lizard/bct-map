@@ -1513,3 +1513,26 @@ button.rel-row:hover {
 .svc-missed {
   background: var(--rel-late);
 }
+
+/* ---- Analytics: delay along a route, transfers, trends ----------------------------------------- */
+
+/* Rows naming a stop need a wider label than a route badge. */
+.an-row:has(.an-delay-stop) {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 56px;
+}
+
+.an-delay-stop {
+  overflow: hidden;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.an-bar-early {
+  background: var(--rel-early);
+}
+
+.an-bar-late {
+  background: var(--rel-late);
+}

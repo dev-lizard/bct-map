@@ -38,14 +38,12 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
   - **On time:** GPS-timed departures from timepoints (1 minute early to 5 late), by route or by hour.
   - **Predictions:** how close BCT's predicted arrival was, by how far ahead it was made (0–2 up to 20–30 minutes), and how often the bus came early.
   - **Headways:** on frequent service, the extra wait riders have because buses arrive unevenly (excess wait time), by route, time of day and timepoint.
-  - **Schedule:** each route's and each trip's running time against the timetable, to spot schedules that are too tight or too loose.
+  - **Transfers:** at stations served by 3 or more routes, how often a rider makes the timetabled connection to another route, by hub and by pair of routes, and the extra wait when they miss it.
+  - **Schedule:** each route's and each trip's running time against the timetable, late starts against time lost along the way, and for one route, the average delay at each timepoint in order, showing where it builds up.
   - **Speeds:** bus speeds and congestion between stops from GPS, with a map layer. **Bunching:** events by route and hour, each with a replay of the two buses as "ghosts" on the map. **Weather:** on time and running time in dry, rainy and stormy hours.
-  - **Service:** the share of scheduled trips that ran, trips missed without notice, and canceled trips (each one explorable: when it was due and canceled, the bus and BCT alert, the gap riders faced, whether GPS saw it run anyway).
-  - **On time:** GPS-timed departures from timepoints (1 minute early to 5 late), by route or by hour.
-  - **Predictions:** how close BCT's predicted arrival was, by how far ahead it was made (0–2 up to 20–30 minutes), and how often the bus came early.
-  - **Headways:** on frequent service, the extra wait riders have because buses arrive unevenly (excess wait time), by route, time of day and timepoint.
-  - **Schedule:** each route's and each trip's running time against the timetable, to spot schedules that are too tight or too loose.
-  - **Speeds:** bus speeds and congestion between stops from GPS, with a map layer. **Bunching:** events by route and hour, each with a replay of the two buses as "ghosts" on the map. **Weather:** on time and running time in dry, rainy and stormy hours.
+  - **Trends:** every measure day by day, the last 7 days against the 7 before, by day of the week, and the worst days for on-time with the rain, cancellations and bunching that day.
+  - **Shelters:** stops with no shelter in the county's stop survey, ranked by buses a weekday.
+  - **Feed:** the quality of BCT's live feed (stale GPS reports, buses going silent or vanishing mid-trip, predictions that are only the timetable, canceled trips that ran), by day and route.
 - **Rail (left):** Routes (filter which routes are shown, or pick one to zoom to it), Search (stops by name or number, routes by number or name), Alerts, and Settings. Settings and the route filter are saved in your browser.
 - **Theme:** day or night is picked by the time in Broward, unless you choose one in Settings. `?theme=day` or `?theme=night` in the URL overrides both.
 - **Links:** the URL always describes the current view, so you can bookmark or share it. The camera is in the hash (`#zoom/lat/lon/bearing/pitch`); the query string can add `?routes=01,22`, `?stop=0210`, or `?trip=<trip_id>&date=YYYYMMDD`. The detail panel's link button copies it.
@@ -55,7 +53,7 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 | Command | What it does |
 |---|---|
 | `npm run build:static` | Builds the route, stop, shape and timetable JSON from BCT's GTFS zip. Pass a local zip path or URL to override the source. |
-| `npm run dev` | Starts the local server: the API, the web app, feed polling, and a nightly timetable rebuild at 3:30 AM Broward time. Optional env vars: `PORT`, `REFRESH_MS`, `NIGHTLY_BUILD_AT` (`HH:MM` or `off`). |
+| `npm run dev` | Starts the local server: the API, the web app, feed polling, and a nightly timetable rebuild at 3:30 AM Broward time. Optional env vars: `PORT`, `REFRESH_MS`, `NIGHTLY_BUILD_AT` (`HH:MM` or `off`), `CONTRACT_FEED_BASE` (the contracted routes' feeds; see docs/DEPLOY.md). |
 | `npm run dev:worker` | Runs the Cloudflare Worker locally on port 8788 (needs `npm run dev` running too). |
 | `npm run build:site` | Assembles the GitHub Pages site in `_site/`; `API_URL` sets the Worker address. `build:site:local` points it at the local Worker. |
 | `node scripts/make-icons.mjs` | Redraws the app icons in `web/icons/` |
@@ -70,9 +68,9 @@ Served by the Cloudflare Worker (`worker/`) when deployed, and by `server/index.
 |---|---|
 | `GET /api/rt` | BCT's vehicle positions, trip updates and alerts as raw protobuf in one bundle, plus up to three older vehicle feeds (format in `web/gtfs-rt.js`). `X-Server-Time` gives the server's clock. |
 | `GET /api/segments` | Measured bus running times for every stretch between stops, per time of day, plus running time by weather (`?days=7`, up to 30) |
-| `GET /api/service` | Service delivered (trips run, missed without notice, canceled), prediction accuracy by lead time, headway sums for excess wait, and running times by trip (`?days=7`, up to 30) |
+| `GET /api/service` | Service delivered (trips run, missed without notice, canceled), prediction accuracy by lead time, headway sums for excess wait, running times and start delays by trip, delay by timepoint, transfers at hubs, feed quality, and day-by-day series for trends (`?days=7`, up to 30) |
 | `GET /api/bunching-track` | Both buses' GPS tracks from 15 minutes before to 15 after a bunching event (`?key=<service date>|<leading trip>|<following trip>`) |
-| `GET /api/analytics` | Bunching events, canceled trips, and on-time stats by weather (`?days=7`, up to 30) |
+| `GET /api/analytics` | Bunching events, canceled trips, and on-time stats by weather, each with counts by date (`?days=7`, up to 30) |
 | `GET /api/reliability` | On-time / early / late shares at timepoints, by route, or by hour for one route (`?route=BCT22&days=7`) |
 | `GET /api/weather` | Current conditions in Fort Lauderdale (cached 10 minutes) |
 | `GET /api/radar` | Time and tile URL of the latest NEXRAD radar composite |
@@ -86,4 +84,4 @@ The timetable is static JSON under `data/<build>/`, from `build:static`.
 
 The free setup is GitHub Pages for the site plus a Cloudflare Worker for the API, deployed by GitHub Actions on every push to `main`. [docs/DEPLOY.md](docs/DEPLOY.md) walks through the one-time setup and the day-to-day loop, and also covers self-hosting with Docker or plain Node.
 
-Data: Broward County Transit GTFS / GTFS-Realtime. Basemap: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors.
+Data: Broward County Transit GTFS / GTFS-Realtime, with routes 4, 6, 15, 23 and 56 from the contractor's TrackTrolley GTFS-Realtime feeds when configured. Basemap: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors.

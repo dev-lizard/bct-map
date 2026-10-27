@@ -187,3 +187,27 @@ test('a trip update naming a stop by its code still finds the timetable stop', (
   assert.equal(bus.nextStop.stopName, 'Stop B');
   assert.ok(Math.abs(bus.nextStop.lat - 26.11) < 1e-9);
 });
+
+test('a trip update numbering stops one lower than the timetable is placed by stop id', () => {
+  const feed = makeFeed();
+  const nowS = thursday + 7 * H + 58 * 60;
+  // The contracted routes' feed: B is stop_sequence 2 in the timetable but 1 in the feed.
+  feed.ingest({
+    tripUpdates: feedOf(nowS, 'tripUpdate', [update('T1', '20261022', [
+      { stopSequence: 1, stopId: 'B', departure: { time: thursday + 8 * H + 700 } },
+      { stopSequence: 2, stopId: 'C', departure: { time: thursday + 8 * H + 1300 } },
+    ])]),
+    vehiclePositions: feedOf(nowS, 'vehicle', [busOn('T1', nowS)]),
+  });
+  assert.equal(feed.snapshot.vehiclePositions[0].nextStop.stopId, 'B');
+  const stops = feed.tripStopTimes('T1', { date: '20261022', nowS }).stops;
+  assert.equal(stops.find(s => s.stopId === 'B').predicted, thursday + 8 * H + 700);
+  assert.equal(stops.find(s => s.stopId === 'C').predicted, thursday + 8 * H + 1300);
+});
+
+test('a bus whose last report is much older than the feed is left off the map', () => {
+  const feed = makeFeed();
+  const nowS = thursday + 8 * H;
+  feed.ingest({ vehiclePositions: feedOf(nowS, 'vehicle', [busOn('T1', nowS - 60), { ...busOn('T2', nowS - 3 * 24 * H), trip: undefined }]) });
+  assert.deepEqual(feed.snapshot.vehiclePositions.map(v => v.id), ['bus-T1']);
+});

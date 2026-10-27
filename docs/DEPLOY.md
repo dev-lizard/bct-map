@@ -78,6 +78,16 @@ The push starts two workflows (repository **Actions** tab):
 1. In **Settings → Secrets and variables → Actions → Variables**, add `WORKER_URL` with the address from step 4, with no trailing slash.
 2. In **Actions → Deploy site**, click **Run workflow**.
 
+### 5b. Add the contracted routes' feeds (optional)
+
+Routes 4, 6, 15, 23 and 56 are run by a contractor, and their buses aren't in BCT's feeds; they come from the contractor's TrackTrolley system. Its address includes a private key, so it isn't in the repository. Give it to the Worker as a secret, once, from the project folder:
+
+```bash
+npx wrangler secret put CONTRACT_FEED_BASE
+```
+
+Paste the address up to and including `/command/gtfs-rt/` (`https://tcbct.tracktrolley.com/api/v1/key/<key>/agency/BCT/command/gtfs-rt/`) when it asks. Deploys from GitHub keep the secret. Without it, the app works as before, without those five routes.
+
 ### 6. Check it
 
 - **The site:** open `https://<you>.github.io/broward-transit-3d/`. Buses should appear within about 10 seconds.
@@ -166,4 +176,4 @@ Point a free uptime monitor (UptimeRobot, Better Stack, Healthchecks.io…) at i
 - **Docker:** `docker build -t broward-transit-3d .`, then run with volumes for `/app/data` and `/app/public/data`. The health check is built in.
 - **Plain Node 22+:** run `npm ci --omit=dev`, then `node server/index.mjs` under systemd with `Restart=always`.
 
-Run exactly one instance. Environment variables: `PORT` (8787), `REFRESH_MS` (10000), `NIGHTLY_BUILD_AT` (`03:30` Broward time, or `off`) and `BCT_STATIC_URL`.
+Run exactly one instance. Environment variables: `PORT` (8787), `REFRESH_MS` (10000), `NIGHTLY_BUILD_AT` (`03:30` Broward time, or `off`), `BCT_STATIC_URL`, and `CONTRACT_FEED_BASE` for the contracted routes' feeds (see step 5b).

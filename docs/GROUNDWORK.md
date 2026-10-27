@@ -461,6 +461,34 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
   - Predictions were scored within minutes (97 on 29 routes).
   - Headways, run times and service delivered need recording to have covered whole trips, so they fill in over the first hours. BCT's frequent service is routes 1, 18 and 19 (gaps of 20 minutes or less), plus some trips on 22, 72 and 114.
 
+**Phase 15 — transfers, late starts, delay build-up, trends, shelters and feed quality ✅ (built and tested locally)**
+
+- **Recording** (more fields in each `server/service.mjs` day, and in its saved state):
+  - **Transfers:** hubs are parent stations whose stops serve 3+ routes (41 in this timetable, from Broward Central Terminal down). Each bus GPS sees at a hub is paired with other routes' buses there in the last hour. A pair counts when the departing bus is the arriving one's timetabled connection (the next on its route and direction, 2 to 30 minutes later). Made means it left at least 2 minutes after the first really arrived; missed adds the timetabled wait for the bus after. Both buses must be seen, and arrivals at a route's last stop are only caught when GPS places the bus at the stop, so missed connections from buses that vanish aren't counted.
+  - **Late starts:** a trip's delay leaving its first timepoint is kept with its running time, so a route's lateness splits into starting late and losing time on the way.
+  - **Delay by timepoint:** average delay at each timepoint, with its timetabled position in the trip, for the "where delay builds up" profile; and on-time counts by route and day for trends.
+  - **Feed quality:** GPS reports more than 2 minutes old when published, a bus on a trip silent for 5+ minutes, a bus GPS loses with 15+ timetabled minutes left (not counted after a gap in recording, so a restart doesn't look like dropouts), and next-stop predictions exactly equal to the timetable.
+  - **Daily counts** for bunching, cancellations and rain hours were added to `/api/analytics`.
+  - `web/schedule.js` gained `routesByStop()` (for hubs) and `departuresByStop(services)` (for shelters), both one pass over the stop patterns.
+  - **Tests:** 4 more in `test/service.test.mjs` (9 in all).
+- **Panel:** four new tabs (Transfers, Trends, Shelters, Feed), and Schedule gained late starts, time lost en route and, for one route, a delay profile whose rows open the stop.
+  - **Transfers:** hubs worst first; a hub opens its route pairs, which narrow every tab to a route.
+  - **Trends:** a sortable table of every measure by day, the last 7 days against the 7 before (30-day view), day of the week, and the three worst on-time days with that day's rain, cancellations and bunching.
+  - **Shelters:** computed in the browser from the timetable and the stop survey already loaded for the stop panel. Rain and heat aren't used to weight it: the airport stations show much the same weather county-wide.
+  - **Feed:** totals, by day and by route, and the canceled-but-ran count; its CSV is meant as a report for BCT.
+- **Checked:** every tab in a browser, and the new fields recording in the Node server and `wrangler dev` (41 hubs, feed counts, delay by timepoint, first transfers judged).
+
+**Phase 16 — the contracted routes' feeds ✅ (built and tested locally; needs the Worker secret)**
+
+- **Why:** routes 4, 6, 15, 23 and 56 are run by a contractor, and BCT's feeds have none of their buses. The contractor's TrackTrolley system publishes standard GTFS-RT vehicle positions and trip updates, and every trip id in them is in BCT's timetable.
+- **Merging** (`server/bct-feed.mjs`): when `CONTRACT_FEED_BASE` is set, both feeds are fetched alongside BCT's and joined byte for byte, contractor first. Two serialized protobuf messages one after the other read as one message with the entities of both and the last header, so BCT's timestamp still rules (`feedTimestamp` now returns the last header's too) and nothing is re-encoded. A contractor feed is only added to a BCT feed that arrived, so a BCT outage still shows as one. Everything downstream (the map, departures, every recorder) sees the merged feeds.
+- **Quirks handled:**
+  - The trip updates number stops one lower than the timetable. `summarizeTripUpdates` now places a stop by its id when that doesn't match the row at its sequence.
+  - The vehicle feed keeps parked buses' last positions for days. Reports more than 30 minutes older than the feed are left off the map.
+  - TrackTrolley answers HTTP 406 to `Accept: application/x-protobuf`, so it's asked for `application/octet-stream`.
+- **The key:** it's private (the public tracker page uses another), so the address lives in the environment: a Worker secret, or an environment variable for the Node server. Errors leave the address out, since `/api/health` shows them.
+- **Checked:** 3 more tests (108); live, the bundle carried 10 contracted buses and 18 trip updates, and the Buses table showed each with its next stop and delay.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---
@@ -485,7 +513,7 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 | `scripts/build-static.mjs` | BCT GTFS zip → `public/data/<folder>/…`, including the compact `schedule.json` | ✅ 44 routes, 5,981 trips, 4,793 stops, 166 shapes; schedule 1.9 MB (148 KB gzipped) |
 | `scripts/build-site.mjs` | Assembles `_site/` for GitHub Pages and writes `runtime-config.js` | ✅ served under a subpath against a local Worker |
 | `web/live.js` | Live snapshot (bearing, speed, delay, joins), stop departure boards, trip timelines, alerts, in the browser | ✅ against live feeds, plus 9 tests in `test/departures.test.mjs` and `test/schedule.test.mjs` |
-| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit | ✅ 5 tests; predictions scored live; `/api/service` checked in Node and `wrangler dev` |
+| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit and late starts, delay by timepoint, transfers at hubs, feed quality | ✅ 9 tests; recording live; `/api/service` checked in Node and `wrangler dev` |
 | `server/segments.mjs`, `web/speeds.js` | Running times between stops from GPS; speeds, congestion and the map layer | ✅ 9 tests; recorded live and checked in a browser |
 | `server/analytics.mjs`, `server/analytics-log.mjs` | Bunching, cancellations, adherence by weather; the Node server's event log | ✅ 8 tests; checked on live data and in the panel |
 | `web/buses.js`, `web/analytics.js`, `web/csv.js` | Buses table and Analytics panel, with CSV downloads | ✅ checked in a browser at 800 and 1,280 px |
@@ -497,7 +525,7 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 | `web/api.js`, `web/runtime-config.js` | Where the API lives (same origin locally, the Worker on Pages) | ✅ |
 | `worker/`, `wrangler.toml` | Cloudflare Worker and its Recorder Durable Object | ✅ `wrangler dev` with a cron tick; not deployed |
 | `.github/workflows/` | Deploy the site to Pages and the Worker to Cloudflare | ⚠️ not run yet |
-| `server/bct-feed.mjs` | Fetches BCT's raw feeds; keeps older vehicle feeds for the bundle | ✅ 1 test, live |
+| `server/bct-feed.mjs` | Fetches BCT's raw feeds, merges in the contracted routes' (TrackTrolley) feeds, keeps older vehicle feeds for the bundle | ✅ 2 tests, live |
 | `server/index.mjs` | Dev and self-hosting server: `/api/rt`, `/api/reliability`, `/api/weather`, `/api/radar`, `/api/health`, static files | ✅ in a browser |
 | `web/panel.js` | Stop departure board and trip timeline panel, with "Copy link" | ✅ Clicked through in a browser against live data |
 | `web/sidebar.js` | Rail plus routes, search, alerts and settings panels | ✅ Each panel opened in a browser against live data |
