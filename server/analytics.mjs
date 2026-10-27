@@ -1,5 +1,6 @@
 // Service analytics, shared by the Node server (analytics-log.mjs) and the Worker's Durable Object
-// (worker/recorder.js): bus bunching, cancellations, and schedule adherence by weather.
+// (worker/recorder.js): bus bunching and schedule adherence by weather. (Canceled trips are
+// followed in cancellations.mjs.)
 //
 // Bunching: two buses on the same route and direction reaching the same stop within BUNCHED_MAX_S
 // of each other, and within BUNCHED_SHARE of the gap the timetable plans between them, for trips
@@ -84,13 +85,6 @@ export function busesOnTrips(vehicleFeed) {
   return out;
 }
 
-// -> [{ date, tripId, routeId, at }] for trips the feed marks canceled.
-export function findCancellations(liveTrips, trips, feedTs) {
-  return [...liveTrips]
-    .filter(live => live.canceled && live.startDate)
-    .map(live => ({ date: live.startDate, tripId: live.tripId, routeId: trips[live.tripId]?.r ?? live.routeId ?? null, at: feedTs }));
-}
-
 // Keeps only events not seen before. seen(date) returns that service date's Set of keys.
 export function newEvents(events, keyOf, seen) {
   return events.filter(e => {
@@ -102,7 +96,6 @@ export function newEvents(events, keyOf, seen) {
   });
 }
 export const bunchKey = e => `${e.leader}|${e.follower}`;
-export const cancelKey = e => e.tripId;
 
 const inWindow = (date, days, today) => date >= addDays(today, -(days - 1));
 const countBy = (rows, key) => {
@@ -122,16 +115,6 @@ export function summarizeBunching(events, { days, timezone, nowS = Date.now() / 
     byHour: [...countBy(rows, e => Number(hourFormat.format(e.at * 1000)))].map(([hour, events]) => ({ hour, events })).sort((a, b) => a.hour - b.hour),
     recent: rows.sort((a, b) => b.at - a.at).slice(0, MAX_RECENT),
     rule: { maxS: BUNCHED_MAX_S, share: BUNCHED_SHARE, minScheduledS: MIN_SCHEDULED_GAP_S },
-  };
-}
-
-export function summarizeCancellations(rows, { days, timezone, nowS = Date.now() / 1000 }) {
-  const today = ymdInZone(new Date(nowS * 1000), timezone);
-  const shown = rows.filter(r => inWindow(r.date, days, today));
-  return {
-    total: shown.length,
-    byRoute: [...countBy(shown, r => r.routeId)].map(([routeId, trips]) => ({ routeId, trips })).sort((a, b) => b.trips - a.trips),
-    recent: shown.sort((a, b) => b.at - a.at).slice(0, MAX_RECENT),
   };
 }
 

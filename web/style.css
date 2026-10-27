@@ -1251,3 +1251,97 @@ button.rel-row:hover {
   gap: 3px;
   vertical-align: middle;
 }
+
+/* ---- Canceled trips --------------------------------------------------------------------------- */
+
+.an-canceled {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.an-canceled:hover,
+.an-row-button:hover {
+  background: var(--row-hover);
+}
+
+.an-row-button {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.an-row-button[aria-pressed='true'] {
+  background: var(--pressed);
+}
+
+.cancel-ran {
+  color: var(--live);
+}
+
+.cancel-missed {
+  color: var(--late);
+}
+
+.verdict {
+  margin: 12px 14px 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--input-bg);
+  font-size: 13px;
+}
+
+.verdict-ran {
+  border-left: 4px solid var(--live);
+}
+
+.verdict-partial,
+.verdict-assigned,
+.verdict-restored,
+.verdict-watching {
+  border-left: 4px solid #d97706;
+}
+
+.verdict-missed {
+  border-left: 4px solid var(--late);
+}
+
+.facts {
+  margin: 4px 14px 8px;
+  font-size: 13px;
+}
+
+.fact {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.fact dt {
+  color: var(--panel-muted);
+  font-size: 12px;
+}
+
+.fact dd {
+  margin: 0;
+}
+
+.section-title {
+  margin: 14px 14px 4px;
+  font-size: 13px;
+}

@@ -6,11 +6,17 @@
 // Stored as counts per (service date, route, hour) rather than one row per departure, which keeps
 // the database small and inside the free plan (100,000 rows written a day; this writes about
 // 60,000: one row per departure in `seen`, deleted after 3 days, plus one count update per route and
-// hour per minute, plus a few hundred bunching events and cancellations). The timetable comes from
+// hour per minute, plus a few hundred bunching events). The timetable comes from
 // the GitHub Pages site (PAGES_URL), reloaded when a new build is published.
 //
-// It also measures bus running times between stops from GPS (server/segments.mjs). Each day's
-// totals are one row in `segment_days`, saved every SEGMENTS_SAVE_MS: a few hundred writes a day.
+// It also measures bus running times between stops from GPS (server/segments.mjs) and follows
+// canceled trips (server/cancellations.mjs). Each day of each is one row (`segment_days`,
+// `cancel_days`), saved every tick.
+//
+// Cloudflare may stop the object between ticks, and memory goes with it. So everything a tick
+// needs from the one before (where each bus was along its trip, each trip's GPS progress) is saved
+// in `state` at the end of every tick and read back on the next wake-up: a few rows a minute,
+// about 4,300 writes a day.
 import { DurableObject } from 'cloudflare:workers';
 import { decodeFeed, feedTimestamp } from '../web/gtfs-rt.js';
 import { addDays, ymdInZone } from '../web/gtfs-util.js';
@@ -18,8 +24,9 @@ import { summarizeTripUpdates } from '../web/live.js';
 import { Schedule } from '../web/schedule.js';
 import { fetchAllFeeds, USER_AGENT } from '../server/bct-feed.mjs';
 import {
-  bunchKey, busesOnTrips, cancelKey, findBunching, findCancellations, newEvents, summarizeBunching, summarizeCancellations,
+  bunchKey, busesOnTrips, findBunching, newEvents, summarizeBunching,
 } from '../server/analytics.mjs';
+import { alertsByTrip, CancellationLog } from '../server/cancellations.mjs';
 import { healthReport } from '../server/health.mjs';
 import { SegmentLog } from '../server/segments.mjs';
 import { addDelay, emptyCount, summarize, timepointDepartures } from '../server/ontime.mjs';
@@ -28,7 +35,6 @@ const TIMEZONE = 'America/New_York';
 const KEEP_DAYS = 30; // service days of counts kept
 const SEEN_DAYS = 3; // service days of "already recorded" memory kept
 const MANIFEST_CHECK_MS = 10 * 60_000;
-const SEGMENTS_SAVE_MS = 10 * 60_000;
 const SEGMENTS_KEEP_DAYS = 31;
 
 export class Recorder extends DurableObject {
@@ -36,12 +42,11 @@ export class Recorder extends DurableObject {
   #seen = new Map(); // service date -> Set of "trip_id|stop_sequence"
   #counts = new Map(); // "date|route|hour" -> { date, routeId, hour, n, early, late, sumDelay }
   #bunching = []; // bunching events (server/analytics.mjs), last KEEP_DAYS service days
-  #cancellations = [];
-  #eventSeen = { bunch: new Map(), cancel: new Map() }; // service date -> Set of event keys
+  #cancellations = new CancellationLog({ timezone: TIMEZONE }); // one row per day in cancel_days
+  #eventSeen = { bunch: new Map() }; // service date -> Set of event keys
   #schedule = null;
   #stops = null; // stop id -> { lat, lon }, for measuring running times
   #segments = new SegmentLog({ timezone: TIMEZONE });
-  #segmentsSavedAt = Date.now();
   #folder = null;
   #manifestCheckedAt = 0;
 
@@ -62,9 +67,8 @@ export class Recorder extends DurableObject {
         PRIMARY KEY (date, leader, follower)
       ) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS segment_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
-      CREATE TABLE IF NOT EXISTS canceled (
-        date TEXT NOT NULL, trip TEXT NOT NULL, route TEXT, at INTEGER NOT NULL, PRIMARY KEY (date, trip)
-      ) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS cancel_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
+      DROP TABLE IF EXISTS canceled;
     `);
   }
 
@@ -79,25 +83,30 @@ export class Recorder extends DurableObject {
     } catch (err) {
       status.errors.push(`Timetable: ${err.message}`);
     }
-    const feeds = await fetchAllFeeds(['vehiclePositions', 'tripUpdates'], { base: this.env.BCT_BASE || undefined });
+    const feeds = await fetchAllFeeds(['vehiclePositions', 'tripUpdates', 'alerts'], { base: this.env.BCT_BASE || undefined });
     status.errors.push(...feeds.errors);
     if (feeds.vehiclePositions) {
       status.okAt = nowS;
       status.vehicleFeedS = feedTimestamp(feeds.vehiclePositions);
     }
     const vehicles = feeds.vehiclePositions ? decodeFeed(feeds.vehiclePositions) : null;
+    const passages = [];
     if (vehicles && this.#schedule && this.#stops) {
-      const passages = [];
       status.runs = this.#segments.observe(vehicles, { trips: this.#schedule.trips, stops: this.#stops, onPass: p => passages.push(p) });
       status.recorded = this.#record(passages);
-      if (Date.now() - this.#segmentsSavedAt >= SEGMENTS_SAVE_MS) this.#saveSegments();
     }
     if (feeds.tripUpdates && this.#schedule) {
       const live = summarizeTripUpdates(decodeFeed(feeds.tripUpdates), { trips: this.#schedule.trips, timezone: TIMEZONE });
       const busOnTrip = vehicles ? busesOnTrips(vehicles) : null;
       Object.assign(status, this.#analyze(live, busOnTrip));
+      status.cancels = this.#cancellations.observe({
+        liveTrips: live.trips.values(), trips: this.#schedule.trips, feedTs: live.feedTs, busOnTrip,
+        alerts: alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null), passages,
+      });
     }
     this.#prune();
+    this.#saveDaily();
+    this.#set('tracking', { buses: this.#segments.exportTracking(), progress: this.#cancellations.exportProgress() });
     this.#set('tick', status);
     return status;
   }
@@ -133,7 +142,7 @@ export class Recorder extends DurableObject {
       windowDays: days,
       collectingSince: this.#get('analyticsSince'),
       bunching: summarizeBunching(this.#bunching, opts),
-      cancellations: summarizeCancellations(this.#cancellations, opts),
+      cancellations: this.#cancellations.summary({ days }),
       hourCounts: [...hours.values()],
     };
   }
@@ -207,23 +216,19 @@ export class Recorder extends DurableObject {
     return newSeen.length;
   }
 
-  // New bunching events and cancellations in the latest trip updates.
+  // New bunching events in the latest trip updates.
   #analyze({ feedTs, trips }, busOnTrip) {
     const live = [...trips.values()];
-    const seen = type => date => this.#eventSeenFor(type, date);
-    const bunches = newEvents(findBunching(live, this.#schedule.trips, { timezone: TIMEZONE, busOnTrip }), bunchKey, seen('bunch'));
-    const cancels = newEvents(findCancellations(live, this.#schedule.trips, feedTs), cancelKey, seen('cancel'));
+    const bunches = newEvents(findBunching(live, this.#schedule.trips, { timezone: TIMEZONE, busOnTrip }), bunchKey, date => this.#eventSeenFor('bunch', date));
     if (this.#get('analyticsSince') == null) this.#set('analyticsSince', Math.floor(feedTs));
-    if (!bunches.length && !cancels.length) return { bunches: 0, cancels: 0 };
+    if (!bunches.length) return { bunches: 0 };
     this.#bunching.push(...bunches);
-    this.#cancellations.push(...cancels);
     this.ctx.storage.transactionSync(() => {
       for (const e of bunches) {
         this.sql.exec('INSERT OR IGNORE INTO bunching VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', e.date, e.leader, e.follower, e.routeId, e.direction, e.stopId, e.at, e.actualS, e.scheduledS);
       }
-      for (const e of cancels) this.sql.exec('INSERT OR IGNORE INTO canceled VALUES (?, ?, ?, ?)', e.date, e.tripId, e.routeId, e.at);
     });
-    return { bunches: bunches.length, cancels: cancels.length };
+    return { bunches: bunches.length };
   }
 
   #eventSeenFor(type, date) {
@@ -232,17 +237,17 @@ export class Recorder extends DurableObject {
     return map.get(date);
   }
 
-  // Writes the days whose running-time totals changed: one row each.
-  #saveSegments() {
-    const dirty = [...this.#segments.dirty];
+  // Writes the days whose running-time totals or cancellations changed: one row each.
+  #saveDaily() {
     this.ctx.storage.transactionSync(() => {
-      for (const date of dirty) {
-        const json = this.#segments.serialize(date);
-        if (json) this.sql.exec('INSERT INTO segment_days (date, data) VALUES (?, ?) ON CONFLICT (date) DO UPDATE SET data = excluded.data', date, json);
+      for (const [log, table] of [[this.#segments, 'segment_days'], [this.#cancellations, 'cancel_days']]) {
+        for (const date of log.dirty) {
+          const json = log.serialize(date);
+          if (json) this.sql.exec(`INSERT INTO ${table} (date, data) VALUES (?, ?) ON CONFLICT (date) DO UPDATE SET data = excluded.data`, date, json);
+        }
+        log.dirty.clear();
       }
     });
-    this.#segments.dirty.clear();
-    this.#segmentsSavedAt = Date.now();
   }
 
   // Once per service day: forget old departures and counts.
@@ -254,13 +259,13 @@ export class Recorder extends DurableObject {
     this.sql.exec('DELETE FROM seen WHERE date < ?', seenFrom);
     this.sql.exec('DELETE FROM counts WHERE date < ?', countsFrom);
     this.sql.exec('DELETE FROM bunching WHERE date < ?', countsFrom);
-    this.sql.exec('DELETE FROM canceled WHERE date < ?', countsFrom);
+    this.#cancellations.prune(countsFrom);
+    this.sql.exec('DELETE FROM cancel_days WHERE date < ?', countsFrom);
     this.#bunching = this.#bunching.filter(e => e.date >= countsFrom);
-    this.#saveSegments();
+    this.#saveDaily();
     const segmentsFrom = addDays(today, -(SEGMENTS_KEEP_DAYS - 1));
     this.#segments.prune(segmentsFrom);
     this.sql.exec('DELETE FROM segment_days WHERE date < ?', segmentsFrom);
-    this.#cancellations = this.#cancellations.filter(e => e.date >= countsFrom);
     for (const map of Object.values(this.#eventSeen)) for (const date of map.keys()) if (date < countsFrom) map.delete(date);
     for (const date of this.#seen.keys()) if (date < seenFrom) this.#seen.delete(date);
     for (const [key, c] of this.#counts) if (c.date < countsFrom) this.#counts.delete(key);
@@ -289,11 +294,10 @@ export class Recorder extends DurableObject {
       this.#eventSeenFor('bunch', e.date).add(bunchKey(e));
     }
     for (const r of this.sql.exec('SELECT date, data FROM segment_days')) this.#segments.load(r.date, r.data);
-    for (const r of this.sql.exec('SELECT * FROM canceled')) {
-      const e = { date: r.date, tripId: r.trip, routeId: r.route, at: r.at };
-      this.#cancellations.push(e);
-      this.#eventSeenFor('cancel', e.date).add(cancelKey(e));
-    }
+    for (const r of this.sql.exec('SELECT date, data FROM cancel_days')) this.#cancellations.load(r.date, r.data);
+    const tracking = this.#get('tracking');
+    this.#segments.importTracking(tracking?.buses);
+    this.#cancellations.importProgress(tracking?.progress);
     this.#loaded = true;
   }
 

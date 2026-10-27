@@ -5,6 +5,7 @@
 import { getApiJson } from './api.js';
 import { csvTime, downloadCsv } from './csv.js';
 import { el, formatDate, formatTime, formatWhen, routeBadge } from './dom.js';
+import { verdictLabel } from './panel.js';
 import { slowest, SPEED_BANDS, speedFeatures, speedTable } from './speeds.js';
 
 const PERIODS = [[1, 'Today'], [7, '7 days'], [30, '30 days']];
@@ -14,12 +15,16 @@ const FEW_SAMPLES = 20;
 // route(routeId) -> route info for badges. stopName(stopId). stop(stopId) -> { lat, lon, name }.
 // tripInfo(tripId, serviceDate) -> { headsign, start (unix seconds) } or null. stopPairRoutes() ->
 // Map of "from>to" -> route ids. onSpeedMap(GeoJSON or null) draws or clears the speed layer.
-export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap }) {
+// onCanceled(record, related) opens a canceled trip's details.
+export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap, onCanceled }) {
   let days = 7;
   let request = 0;
   let speedPeriod = 'all';
   let speedMapOn = false;
   let speedData = null;
+  let cancelRoute = null; // route id the canceled-trip list is narrowed to
+  let cancelShown = SHOW_RECENT;
+  const cancelNode = el('section', { className: 'an-section' });
   const speedsNode = el('section', { className: 'an-section' });
   const content = el('div', {});
   const periods = el('div', { className: 'segmented', role: 'group', ariaLabel: 'Period' });
@@ -45,7 +50,9 @@ export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoute
       if (ticket !== request) return;
       speedData = segments;
       renderSpeeds();
-      content.replaceChildren(intro(data), speedsNode, bunchingSection(data), weatherSection(data.weather), cancellationSection(data));
+      cancelData = data.cancellations;
+      renderCancellations();
+      content.replaceChildren(intro(data), speedsNode, bunchingSection(data), weatherSection(data.weather), cancelNode);
     } catch (err) {
       if (ticket === request) content.replaceChildren(el('p', { className: 'empty' }, `Couldn't load analytics: ${err.message}`));
     }
@@ -182,35 +189,75 @@ export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoute
 
   // ---- Cancellations ---------------------------------------------------------------------------
 
-  function cancellationSection({ cancellations: c }) {
-    const recent = c.recent.slice(0, SHOW_RECENT).map(e => {
-      const info = tripInfo(e.tripId, e.date);
-      return el('div', { className: 'an-event' },
-        el('span', { className: 'an-when' }, info?.start ? formatWhen(info.start) : formatWhen(e.at)), routeBadge(route(e.routeId)),
-        el('span', {}, info?.headsign ?? e.tripId));
+  // Every canceled trip in the period, narrowed to one route by clicking its bar. Each opens its
+  // details (when it was due, notice given, bus, BCT's alert, whether GPS saw it run anyway).
+  let cancelData = null;
+  function renderCancellations() {
+    const c = cancelData;
+    const records = cancelRoute ? c.recent.filter(r => r.routeId === cancelRoute) : c.recent;
+    const missed = c.total - c.ranAnyway - c.restored;
+    const rows = records.slice(0, cancelShown).map(r => {
+      const info = tripInfo(r.tripId, r.date);
+      const b = el('button', { type: 'button', className: 'an-event an-canceled' },
+        el('span', { className: 'an-when' }, info?.start ? formatWhen(info.start) : formatWhen(r.firstSeenAt)), routeBadge(route(r.routeId)),
+        el('span', {}, info?.headsign ?? r.tripId, el('span', { className: `status cancel-${r.stopsPassed > 0 ? 'ran' : r.restoredAt != null ? 'restored' : 'missed'}` }, ` · ${verdictLabel(r)}`)));
+      b.title = 'Show the details of this canceled trip';
+      b.addEventListener('click', () => onCanceled(r, c.recent.filter(x => x.routeId === r.routeId && x.date === r.date)));
+      return b;
     });
-    return el('section', { className: 'an-section' },
+    const more = records.length > cancelShown && el('button', { type: 'button', className: 'link' }, `Show all ${records.length}`);
+    if (more) more.addEventListener('click', () => {
+      cancelShown = Infinity;
+      renderCancellations();
+    });
+    const clear = cancelRoute && el('button', { type: 'button', className: 'link' }, 'Show all routes');
+    if (clear) clear.addEventListener('click', () => {
+      cancelRoute = null;
+      renderCancellations();
+    });
+    cancelNode.replaceChildren(...[
       el('div', { className: 'an-head' }, el('h3', {}, 'Canceled trips'), csvButton(`broward-cancellations-${days}d.csv`, () => [
-        ['service_date', 'route', 'trip_id', 'destination', 'first_seen'],
-        ...c.recent.map(e => [e.date, route(e.routeId).routeShortName, e.tripId, tripInfo(e.tripId, e.date)?.headsign, csvTime(e.at)]),
+        ['service_date', 'route', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened'],
+        ...c.recent.map(r => {
+          const info = tripInfo(r.tripId, r.date);
+          return [r.date, route(r.routeId).routeShortName, r.tripId, info?.headsign, csvTime(info?.start), csvTime(r.firstSeenAt), csvTime(r.lastSeenAt), csvTime(r.restoredAt),
+            r.vehicles.join(' '), r.stopsPassed, csvTime(r.firstPassAt), csvTime(r.lastPassAt), csvTime(r.predictedStartAt),
+            r.alerts.map(a => [a.header, a.description].filter(Boolean).join(': ')).join(' | '), verdictLabel(r)];
+        }),
       ], c.recent.length)),
       el('p', { className: 'an-stat' }, el('strong', {}, c.total.toLocaleString('en-US')), ` canceled ${c.total === 1 ? 'trip' : 'trips'} ${periodText()}`),
-      el('p', { className: 'status' }, 'Trips BCT\'s feed marks as canceled. Trips that never ran without being marked aren\'t counted.'),
-      c.total > 0 && countRows(c.byRoute.map(r => ({ label: routeBadge(route(r.routeId)), value: r.trips, title: `Route ${route(r.routeId).routeShortName}: ${r.trips}` }))),
-      recent.length > 0 && el('h4', {}, 'Latest (scheduled start)'),
-      ...recent,
-    );
+      c.total > 0 && el('p', { className: 'status' }, `${c.ranAnyway} ran anyway (seen by GPS) · ${c.restored} put back on the schedule · ${missed} not seen running (so far)`),
+      el('p', { className: 'status' }, 'Trips BCT\'s feed marks as canceled, followed through the day. BCT also marks trips canceled that buses then run, often with a "Delayed" alert, so check what GPS saw. Click a trip for the details, or a route to list only its trips.'),
+      c.total > 0 && countRows(c.byRoute.map(r => ({
+        label: routeBadge(route(r.routeId)), value: r.trips, title: `Route ${route(r.routeId).routeShortName}: ${r.trips}. Click to list them.`,
+        selected: r.routeId === cancelRoute,
+        onClick: () => {
+          cancelRoute = cancelRoute === r.routeId ? null : r.routeId;
+          cancelShown = Infinity;
+          renderCancellations();
+        },
+      }))),
+      rows.length > 0 && el('h4', {}, cancelRoute ? `Route ${route(cancelRoute).routeShortName} (scheduled start)` : 'Latest (scheduled start)', clear ? ' · ' : '', clear),
+      ...rows,
+      more,
+    ].filter(Boolean));
   }
 
   // ---- Small charts ----------------------------------------------------------------------------
 
   // Horizontal bars, one per row, scaled to the largest; the number beside each bar.
+  // A row with onClick is a button (selected: pressed).
   function countRows(rows) {
     const max = Math.max(1, ...rows.map(r => r.value));
     return el('div', { className: 'an-rows' }, ...rows.map(r => {
       const bar = el('span', { className: 'an-bar', title: r.title });
       bar.style.width = `${(100 * r.value) / max}%`;
-      return el('div', { className: 'an-row' }, r.label, el('span', { className: 'an-track' }, bar), el('span', { className: 'an-value' }, String(r.value)));
+      const parts = [r.label, el('span', { className: 'an-track' }, bar), el('span', { className: 'an-value' }, String(r.value))];
+      if (!r.onClick) return el('div', { className: 'an-row' }, ...parts);
+      const b = el('button', { type: 'button', className: 'an-row an-row-button', title: r.title }, ...parts);
+      b.setAttribute('aria-pressed', String(Boolean(r.selected)));
+      b.addEventListener('click', r.onClick);
+      return b;
     }));
   }
 

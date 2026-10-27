@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  bunchKey, classifyRain, findBunching, findCancellations, hourCountsFromSamples, newEvents, summarizeBunching, weatherByHour, weatherImpact,
+  bunchKey, classifyRain, findBunching, hourCountsFromSamples, newEvents, summarizeBunching, weatherByHour, weatherImpact,
 } from '../server/analytics.mjs';
 import { serviceDayStart } from '../web/gtfs-util.js';
 
@@ -55,11 +55,6 @@ test('bunching events are kept once per pair per day, and summarised by route an
   const s = summarizeBunching(first, { days: 7, timezone: TZ, nowS: day + 10 * H });
   assert.deepEqual([s.total, s.byRoute, s.byHour], [1, [{ routeId: 'R1', events: 1 }], [{ hour: 8, events: 1 }]]);
   assert.equal(summarizeBunching(first, { days: 7, timezone: TZ, nowS: day + 9 * 86400 }).total, 0); // aged out
-});
-
-test('cancellations come from the feed\'s CANCELED trips', () => {
-  const rows = findCancellations([live('T1', 1, 'A', { 1: day }, { canceled: true }), live('T2', 1, 'A', { 1: day })], trips, day);
-  assert.deepEqual(rows, [{ date: '20261023', tripId: 'T1', routeId: 'R1', at: day }]);
 });
 
 test('weather classes from station rain: the wettest station decides the hour', () => {

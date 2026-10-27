@@ -407,6 +407,31 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
   - **Classes:** an hour is as wet as its wettest station. Rain is 0.01 in or more and heavy is 0.10 in or more; a trace counts as dry.
   - **Hours:** a report valid at 14:00 covers 13:00–14:00. Hours no station reported (including the last hour or two, before IEM has them) are left out rather than counted as dry.
 
+**Phase 12 — investigating canceled trips ✅ (built and tested locally)**
+
+- **Why:** BCT's CANCELED flag doesn't simply mean "didn't run".
+  - Canceled trips often still have a bus on them in the vehicle feed, and BCT keeps publishing predictions for them.
+  - The one active alert, "Delayed: Trip is Delayed", listed 10 of 14 canceled trips.
+  - Of 22 trips canceled on Oct 23, GPS saw buses run 6 at least partly, and BCT put 4 back on the schedule.
+- **Recording** (`server/cancellations.mjs`): each canceled trip is followed through its day.
+  - **From the feeds:** when it was first and last marked canceled, whether it went back on the schedule, which buses were on it, BCT's alert text, and the start time BCT still predicted.
+  - **From GPS:** stops passed, and when, including before it was marked canceled (every trip's progress is held in memory for a day).
+  - **Storage:** one value per service day. That's `data/cancellations/` locally, or a `cancel_days` row in the Durable Object (saved every 10 minutes); the old `canceled` table is dropped.
+  - **Other changes:** the Durable Object now also fetches the alerts feed, and bunching stays in `analytics.mjs`.
+- **Investigating** (`web/canceled.js`, `renderCanceled` in `web/panel.js`): clicking a canceled trip opens it in the side panel.
+  - **The trip:** its timetabled run (first and last stops, number of stops, duration), and when it was marked canceled, as notice before or after its departure.
+  - **What happened:** the bus, what GPS saw, and BCT's alerts.
+  - **The rider gap:** the previous and next bus on the same route and direction at its first stop that day (for example, "a 60-minute wait instead of about 30").
+  - **Links:** the trip's timetable, its route on the map, and the route's other canceled trips that day.
+  - **Verdicts:** ran anyway (GPS saw at least half its stops), partly run, back on the schedule, still under way (being watched), bus assigned but not seen, or no bus seen.
+- **List:** the Analytics list shows every canceled trip with its verdict, filters to a route by clicking its bar, and its CSV includes every field.
+- **Tests:** 7 more (`test/cancellations.test.mjs`, `test/canceled.test.mjs`).
+- **Fixed alongside: the deployed Worker had measured nothing for four days** (no stretches, no GPS-timed departures), while the Node server measured 7,649 runs in a day.
+  - **Cause:** Cloudflare stops an idle Durable Object between its once-a-minute ticks, and its memory goes with it. So no bus ever had a "previous report" to measure from, and the 10-minute save timer restarted with the object and never fired.
+  - **Fix:** the per-bus tracking (`SegmentLog.exportTracking`) and every trip's GPS progress (`CancellationLog.exportProgress`) are saved in `state` at the end of every tick and restored on wake-up, and the day totals are saved every tick. That's about 4,300 row writes a day.
+  - **Checked:** restarting `wrangler dev` between ticks; the first tick after the restart measured 89 runs from the saved positions. There's also a restart test in `test/segments.test.mjs`.
+- **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
+
 ---
 
 ## 7. Risks and open questions

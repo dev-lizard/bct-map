@@ -1,6 +1,7 @@
-// The detail panel: a stop's departure board or a trip's timeline, refreshed with every feed poll.
-// load(view) returns what to show (LiveFeed.stopDepartures or tripStopTimes in web/live.js).
-import { el, formatTime, icon, routeBadge } from './dom.js';
+// The detail panel: a stop's departure board, a trip's timeline, or the story of a canceled trip,
+// refreshed with every feed poll. load(view) returns what to show (LiveFeed.stopDepartures or
+// tripStopTimes in web/live.js, or canceledTripDetails in web/canceled.js).
+import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 import { directionsUrl } from './links.js';
 
 // "On time", "4 min late", "3 min early", from seconds of delay.
@@ -26,7 +27,8 @@ const liveDot = () => el('span', { className: 'live-dot', title: 'Live predictio
 // onView(view) is called whenever the panel opens something or closes (view = null), so the page
 // can keep the URL in step. onFollow(vehicleId) toggles follow mode; isFollowing(vehicleId) says
 // whether the camera is following that bus.
-export function createPanel(root, { load, onStop, onTrip, onBus, onFollow, isFollowing, onView }) {
+// onRoute(routeId) shows a route on the map.
+export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFollow, isFollowing, onView }) {
   const titleEl = el('div', { className: 'detail-title' });
   const copyButton = el('button', { className: 'icon-button', type: 'button', title: 'Copy link to this view', ariaLabel: 'Copy link' }, icon('link'));
   const closeButton = el('button', { className: 'icon-button close', type: 'button', title: 'Close', ariaLabel: 'Close panel' }, '×');
@@ -69,6 +71,7 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onFollow, isFol
       if (!data) throw new Error('Not in the current timetable.');
       if (ticket !== request) return; // the panel moved on while this was loading
       if (view.kind === 'stop') renderStop(data);
+      else if (view.kind === 'canceled') renderCanceled(data);
       else renderTrip(data, scrollToNext);
     } catch (err) {
       if (ticket !== request) return;
@@ -176,6 +179,71 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onFollow, isFol
     if (scrollToNext && nextRow) nextRow.scrollIntoView({ block: 'center' });
   }
 
+  // ---- Canceled trip -----------------------------------------------------------------------------
+
+  // data: { details (canceledTripDetails), related: [records], route: route info }.
+  function renderCanceled({ details, related, route }) {
+    const { record, trip, verdict } = details;
+    titleEl.replaceChildren(
+      el('h2', {}, routeBadge(route), ' ', trip?.headsign ?? record.tripId),
+      el('div', { className: 'detail-sub' }, `Canceled trip · ${serviceDateText(record.date)}`),
+    );
+    const fact = (label, ...value) => el('div', { className: 'fact' }, el('dt', {}, label), el('dd', {}, ...value));
+    const stopLink = stop => {
+      const b = el('button', { type: 'button', className: 'link' }, stop.name ?? stop.stopId);
+      b.addEventListener('click', () => onStop(stop.stopId));
+      return b;
+    };
+    const facts = el('dl', { className: 'facts' });
+    if (trip) {
+      facts.append(fact('Timetabled',
+        `${formatTime(trip.firstStop.time)} from `, stopLink(trip.firstStop),
+        ` to ${formatTime(trip.lastStop.time)} at `, stopLink(trip.lastStop),
+        el('div', { className: 'status' }, `${trip.stops} stops, ${Math.round(trip.durationS / 60)} min`)));
+    }
+    facts.append(fact('Marked canceled',
+      `${formatWhen(record.firstSeenAt)}${trip ? `, ${noticeText(details.noticeS)}` : ''}`,
+      record.lastSeenAt - record.firstSeenAt >= 60 ? el('div', { className: 'status' }, `Still marked canceled at ${formatWhen(record.lastSeenAt)}`) : null,
+      record.restoredAt != null ? el('div', { className: 'status' }, `Back on the schedule at ${formatWhen(record.restoredAt)}`) : null));
+    if (record.predictedStartAt) facts.append(fact('BCT still predicted', `a departure at ${formatTime(record.predictedStartAt)}`));
+    facts.append(fact('Bus', record.vehicles.length ? `${record.vehicles.join(', ')} assigned` : 'None assigned'));
+    facts.append(fact('Seen by GPS', record.stopsPassed
+      ? `Passed ${record.stopsPassed}${trip ? ` of ${trip.stops}` : ''} stops, ${formatTime(record.firstPassAt)}–${formatTime(record.lastPassAt)}`
+      : 'No bus seen running it'));
+    if (details.gap?.gapS) {
+      facts.append(fact('Gap at the first stop',
+        `Previous bus ${formatTime(details.gap.previous)}, next ${formatTime(details.gap.next)}`,
+        el('div', { className: 'status' }, `If it didn't run: a ${Math.round(details.gap.gapS / 60)}-minute wait instead of about ${Math.round(details.gap.usualS / 60)}`)));
+    } else if (details.gap && trip) {
+      facts.append(fact('Gap at the first stop', details.gap.next == null ? 'It was the last trip of the day in this direction' : 'It was the first trip of the day in this direction'));
+    }
+    for (const a of record.alerts) {
+      facts.append(fact('BCT alert', el('strong', {}, a.header ?? 'Alert'), a.description && a.description !== a.header ? ` — ${a.description}` : ''));
+    }
+
+    const timetable = el('button', { type: 'button', className: 'small-button' }, 'Timetable');
+    timetable.addEventListener('click', () => onTrip(record.tripId, record.date));
+    const showRoute = el('button', { type: 'button', className: 'small-button' }, 'Show route');
+    showRoute.addEventListener('click', () => onRoute(record.routeId));
+
+    const others = related.map(r => {
+      const b = el('button', { type: 'button', className: 'row' },
+        el('span', { className: 'status' }, formatWhen(r.firstSeenAt)),
+        el('div', { className: 'what' }, el('div', { className: 'headsign' }, r.headsign ?? r.tripId), el('div', { className: 'status' }, verdictLabel(r))),
+        el('span', {}));
+      b.addEventListener('click', () => open({ kind: 'canceled', record: r, related }));
+      return b;
+    });
+    // Optional parts are `false` when absent; replaceChildren would print them.
+    bodyEl.replaceChildren(...[
+      el('p', { className: `verdict verdict-${verdict.kind}` }, verdict.text),
+      facts,
+      el('div', { className: 'panel-tools' }, timetable, showRoute),
+      others.length > 0 && el('h3', { className: 'section-title' }, `Other canceled trips on route ${route.routeShortName} that day`),
+      ...others,
+    ].filter(Boolean));
+  }
+
   // Syncs the Follow button with whether the camera is following its bus.
   function updateFollow() {
     const button = titleEl.querySelector('.follow');
@@ -190,10 +258,33 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onFollow, isFol
     showStop: stopId => open({ kind: 'stop', stopId }),
     updateFollow,
     showTrip: (tripId, date = null) => open({ kind: 'trip', tripId, date }),
+    // record: a canceled trip from /api/analytics; related: other canceled trips to list below it.
+    showCanceled: (record, related = []) => open({ kind: 'canceled', record, related }),
     refresh: () => refresh(),
     close,
     get isOpen() {
       return view != null;
     },
   };
+}
+
+// "Fri, Oct 23" for a YYYYMMDD service date.
+function serviceDateText(ymd) {
+  return formatDate(new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8), 17)));
+}
+
+// How much notice BCT gave, from seconds between marking a trip canceled and its departure.
+function noticeText(noticeS) {
+  const minutes = Math.round(Math.abs(noticeS) / 60);
+  if (minutes < 1) return 'as it was due to leave';
+  const span = minutes >= 120 ? `${Math.round(minutes / 60)} h` : `${minutes} min`;
+  return noticeS > 0 ? `${span} before it was due to leave` : `${span} after it was due to leave`;
+}
+
+// Short label for a canceled-trip record in lists.
+export function verdictLabel(r) {
+  if (r.stopsPassed > 0) return `ran anyway (${r.stopsPassed} stops seen)`;
+  if (r.restoredAt != null) return 'back on the schedule';
+  if (r.vehicles?.length) return `bus ${r.vehicles[0]} assigned`;
+  return 'no bus seen';
 }

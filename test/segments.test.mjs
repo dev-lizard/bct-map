@@ -88,3 +88,14 @@ test('passages: every stop passed, and the first stop once the bus pulls away fr
   for (const [dt, m] of [[0, 0], [10, 0], [20, 50], [100, 450]]) log.observe(report(t0 + dt, m, { trip: { tripId: 'T1', startDate: '20261023' } }), { trips, stops, onPass });
   assert.deepEqual(passages.map(p => [p.seq, Math.round(p.time - t0), p.startDate]), [[1, 15], [2, 90]].map(x => [...x, '20261023']));
 });
+
+test('tracking survives a restart between reports', () => {
+  const t0 = day + 12 * 3600;
+  const first = new SegmentLog({ timezone: TZ });
+  first.observe(report(t0, 350), { trips, stops });
+  const second = new SegmentLog({ timezone: TZ }); // as if the host was stopped and started again
+  second.importTracking(JSON.parse(JSON.stringify(first.exportTracking())));
+  assert.equal(second.observe(report(t0 + 60, 1150), { trips, stops }), 1); // B -> C measured
+  const cold = new SegmentLog({ timezone: TZ });
+  assert.equal(cold.observe(report(t0 + 60, 1150), { trips, stops }), 0); // without it: nothing
+});

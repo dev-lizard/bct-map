@@ -149,6 +149,17 @@ export class SegmentLog {
 
   // ---- Storage: one JSON value per day ---------------------------------------------------------
 
+  // Where each bus was last seen along its trip. A host that may be stopped between reports (the
+  // Durable Object) saves this after each batch and restores it, or no bus would ever have a
+  // previous report to measure from.
+  exportTracking() {
+    return Object.fromEntries(this.#buses);
+  }
+
+  importTracking(tracking) {
+    if (tracking) this.#buses = new Map(Object.entries(tracking));
+  }
+
   dates() {
     return [...this.#days.keys()].sort();
   }

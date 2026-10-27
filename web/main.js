@@ -12,6 +12,7 @@ import { unpackBundle } from './gtfs-rt.js';
 import { LiveFeed } from './live.js';
 import { serviceDayStart } from './gtfs-util.js';
 import { routesByStopPair, SPEED_BANDS } from './speeds.js';
+import { canceledTripDetails } from './canceled.js';
 import { createFrameMonitor, kmOutside, serviceArea } from './device.js';
 import { el, formatClock, formatDate, formatTime, formatWhen, icon, routeBadge, setTimeFormat } from './dom.js';
 import { linkSearch, parseLink } from './links.js';
@@ -1134,6 +1135,14 @@ let pendingTripFocus = null; // trip id from a link whose bus hasn't appeared in
 const panel = createPanel(document.getElementById('panel'), {
   load(view) {
     if (!live) throw new Error('The timetable has not loaded.');
+    if (view.kind === 'canceled') {
+      const details = canceledTripDetails(view.record, {
+        trips: live.trips, calendar: live.calendar, exceptions: live.exceptions, timezone: live.timezone,
+        stopName: id => stopsById.get(id)?.name ?? null,
+      });
+      const related = view.related.filter(r => r.tripId !== view.record.tripId).map(r => ({ ...r, headsign: live.trips[r.tripId]?.h ?? null }));
+      return { details, related, route: live.routeInfo(view.record.routeId) };
+    }
     if (view.kind === 'trip') return live.tripStopTimes(view.tripId, { date: view.date });
     const board = live.stopDepartures(view.stopId);
     const stop = stopsById.get(view.stopId);
@@ -1142,6 +1151,10 @@ const panel = createPanel(document.getElementById('panel'), {
   onStop: stopId => openStop(stopId),
   onTrip: (tripId, date, vehicleId) => openTrip(tripId, date, vehicleId),
   onBus: showBus,
+  onRoute(routeId) {
+    setRouteFilter([routeId]);
+    fitRoute(routeId);
+  },
   onFollow: vehicleId => (followedId === vehicleId ? stopFollow() : startFollow(vehicleId)),
   isFollowing: vehicleId => followedId === vehicleId,
   onView(view) {
@@ -1213,6 +1226,12 @@ function createShell() {
     stop: stopId => stopsById.get(stopId) ?? null,
     stopPairRoutes: () => (stopPairRoutesCache ??= live ? routesByStopPair(live.trips) : new Map()),
     onSpeedMap: showSpeedLayer,
+    onCanceled(record, related) {
+      stopFollow();
+      selectBus(null);
+      selectStop(null);
+      panel.showCanceled(record, related);
+    },
     tripInfo(tripId, date) {
       const trip = live?.trips[tripId];
       if (!trip) return null;

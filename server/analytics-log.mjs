@@ -1,17 +1,17 @@
-// The Node server's log of bunching events and cancellations (the Worker keeps the same in its
-// Durable Object). One JSON object per line in data/analytics/<service date>.jsonl, with
-// type 'bunch' or 'cancel'; the last KEEP_DAYS days are loaded at startup.
+// The Node server's log of bunching events (the Worker keeps the same in its Durable Object). One
+// JSON object per line in data/analytics/<service date>.jsonl, with type 'bunch'; the last
+// KEEP_DAYS days are loaded at startup. (Lines of type 'cancel', from before cancellations moved to
+// cancellations.mjs, are skipped.)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { serviceDayStart } from '../web/gtfs-util.js';
-import { bunchKey, cancelKey, findBunching, findCancellations, newEvents, summarizeBunching, summarizeCancellations } from './analytics.mjs';
+import { bunchKey, findBunching, newEvents, summarizeBunching } from './analytics.mjs';
 
 const KEEP_DAYS = 30;
 
 export class AnalyticsLog {
   bunching = [];
-  cancellations = [];
-  #seen = { bunch: new Map(), cancel: new Map() }; // service date -> Set of keys
+  #seen = { bunch: new Map() }; // service date -> Set of keys
   #writing = Promise.resolve();
 
   constructor({ dir = null, timezone }) {
@@ -32,7 +32,6 @@ export class AnalyticsLog {
         try {
           const { type, ...event } = JSON.parse(line);
           if (type === 'bunch') this.#remember('bunch', event, bunchKey) && this.bunching.push(event);
-          if (type === 'cancel') this.#remember('cancel', event, cancelKey) && this.cancellations.push(event);
         } catch {
           // A line cut short by a crash mid-write.
         }
@@ -40,23 +39,19 @@ export class AnalyticsLog {
     }
   }
 
-  // Records new bunching events and cancellations from one batch of trip-update summaries.
+  // Records new bunching events from one batch of trip-update summaries.
   // busOnTrip: busesOnTrips() of the vehicle feed.
-  observe(liveTrips, trips, feedTs, busOnTrip = null) {
-    const list = [...liveTrips];
-    const seen = type => date => this.#seenFor(type, date);
-    const bunches = newEvents(findBunching(list, trips, { timezone: this.timezone, busOnTrip }), bunchKey, seen('bunch'));
-    const cancels = newEvents(findCancellations(list, trips, feedTs), cancelKey, seen('cancel'));
+  observe(liveTrips, trips, busOnTrip = null) {
+    const bunches = newEvents(findBunching([...liveTrips], trips, { timezone: this.timezone, busOnTrip }), bunchKey, date => this.#seenFor('bunch', date));
     this.bunching.push(...bunches);
-    this.cancellations.push(...cancels);
-    const lines = [...bunches.map(e => ({ type: 'bunch', ...e })), ...cancels.map(e => ({ type: 'cancel', ...e }))];
+    const lines = bunches.map(e => ({ type: 'bunch', ...e }));
     if (this.dir && lines.length) {
       const byDate = Map.groupBy(lines, l => l.date);
       this.#writing = this.#writing
         .then(() => Promise.all([...byDate].map(([date, l]) => fs.appendFile(path.join(this.dir, `${date}.jsonl`), `${l.map(x => JSON.stringify(x)).join('\n')}\n`))))
         .catch(err => console.error(`[analytics] could not save: ${err.message}`));
     }
-    return { bunches: bunches.length, cancels: cancels.length };
+    return bunches.length;
   }
 
   flush() {
@@ -64,8 +59,7 @@ export class AnalyticsLog {
   }
 
   summary({ days = 7, nowS = Date.now() / 1000 } = {}) {
-    const opts = { days, timezone: this.timezone, nowS };
-    return { bunching: summarizeBunching(this.bunching, opts), cancellations: summarizeCancellations(this.cancellations, opts) };
+    return { bunching: summarizeBunching(this.bunching, { days, timezone: this.timezone, nowS }) };
   }
 
   #seenFor(type, date) {
