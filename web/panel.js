@@ -1,8 +1,9 @@
-// The detail panel: a stop's departure board, a trip's timeline, or the story of a canceled trip,
-// refreshed with every feed poll. load(view) returns what to show (LiveFeed.stopDepartures or
+// The detail panel: a stop's departure board, a trip's timeline, the story of a canceled trip, or a
+// bunching replay, refreshed with every feed poll (except the replay, which drives itself). load(view) returns what to show (LiveFeed.stopDepartures or
 // tripStopTimes in web/live.js, or canceledTripDetails in web/canceled.js).
 import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 import { directionsUrl } from './links.js';
+import { GHOST_COLORS } from './replay.js';
 
 // "On time", "4 min late", "3 min early", from seconds of delay.
 function delayText(delay) {
@@ -65,6 +66,7 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFoll
 
   async function refresh({ scrollToNext = false } = {}) {
     if (!view) return;
+    if (view.kind === 'bunch' && !scrollToNext) return; // static once shown; the replay updates itself
     const ticket = ++request;
     try {
       const data = await load(view);
@@ -72,6 +74,7 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFoll
       if (ticket !== request) return; // the panel moved on while this was loading
       if (view.kind === 'stop') renderStop(data);
       else if (view.kind === 'canceled') renderCanceled(data);
+      else if (view.kind === 'bunch') renderBunching(data);
       else renderTrip(data, scrollToNext);
     } catch (err) {
       if (ticket !== request) return;
@@ -244,6 +247,54 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFoll
     ].filter(Boolean));
   }
 
+  // ---- Bunching replay --------------------------------------------------------------------------
+
+  let unsubscribe = null;
+
+  // data: { track, route, stopName, buses: [{ vehicleId, role, headsign }], replay (web/replay.js) }.
+  function renderBunching({ track, route, stopName, buses, replay }) {
+    unsubscribe?.();
+    titleEl.replaceChildren(
+      el('h2', {}, routeBadge(route), ' Bunching at ', stopName ?? track.stopId),
+      el('div', { className: 'detail-sub' }, `${serviceDateText(track.date)} · ${formatTime(track.at)}`),
+    );
+    const apart = track.actualS < 60 ? `${track.actualS} seconds` : `${Math.round(track.actualS / 60)} minutes`;
+    const play = el('button', { type: 'button', className: 'small-button replay-play' });
+    play.addEventListener('click', () => (play.dataset.playing === 'true' ? replay.pause() : replay.play()));
+    const slider = el('input', { type: 'range', className: 'replay-slider', min: String(track.start), max: String(track.end), step: '1', ariaLabel: 'Replay time' });
+    slider.addEventListener('input', () => replay.seek(Number(slider.value)));
+    const clock = el('span', { className: 'replay-clock' });
+    const speed = el('select', { className: 'text-input replay-speed', ariaLabel: 'Replay speed' },
+      ...[10, 30, 60, 120].map(n => el('option', { value: String(n) }, `${n}×`)));
+    speed.addEventListener('change', () => replay.setSpeed(Number(speed.value)));
+    const gap = el('div', { className: 'status replay-gap' });
+    const legend = buses.map(b => {
+      const swatch = el('span', { className: 'replay-swatch' });
+      swatch.style.background = GHOST_COLORS[b.role];
+      return el('div', { className: 'replay-bus' }, swatch,
+        el('div', {}, el('strong', {}, `Bus ${b.vehicleId} · ${b.role === 'leader' ? 'ahead' : 'behind'}`),
+          el('div', { className: 'status' }, b.headsign ?? b.tripId, b.points.length ? ` · ${b.points.length} GPS reports` : ' · no GPS reports captured')));
+    });
+    bodyEl.replaceChildren(...[
+      el('p', { className: 'verdict verdict-partial' }, `The two buses reached this stop ${apart} apart, where the timetable has them ${Math.round(track.scheduledS / 60)} minutes apart.`),
+      ...legend,
+      el('div', { className: 'replay-controls' }, play, slider, speed),
+      el('div', { className: 'replay-readout' }, clock, gap),
+      !track.complete && el('p', { className: 'status replay-note' }, 'Still recording: the 15 minutes after the event are filling in. Reopen it later for the whole half hour.'),
+      el('p', { className: 'status replay-note' }, 'The half hour around the event, from both buses\' GPS. Between reports (about once a minute on the live site) the buses are drawn along their route.'),
+    ].filter(Boolean));
+    unsubscribe = replay.subscribe(s => {
+      play.dataset.playing = String(s.playing);
+      play.textContent = s.playing ? 'Pause' : 'Play';
+      slider.value = String(Math.round(s.t));
+      speed.value = String(s.speed);
+      const into = Math.round((s.t - track.at) / 60);
+      clock.textContent = `${formatTime(s.t)} (${into === 0 ? 'at the event' : into < 0 ? `${-into} min before` : `${into} min after`})`;
+      gap.textContent = s.gapM == null ? '' : `Buses ${s.gapM >= 1000 ? `${(s.gapM / 1609.34).toFixed(1)} mi` : `${Math.round(s.gapM * 3.281)} ft`} apart`;
+    });
+    replay.play();
+  }
+
   // Syncs the Follow button with whether the camera is following its bus.
   function updateFollow() {
     const button = titleEl.querySelector('.follow');
@@ -260,6 +311,8 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFoll
     showTrip: (tripId, date = null) => open({ kind: 'trip', tripId, date }),
     // record: a canceled trip from /api/analytics; related: other canceled trips to list below it.
     showCanceled: (record, related = []) => open({ kind: 'canceled', record, related }),
+    // track: from /api/bunching-track (server/tracks.mjs).
+    showBunching: track => open({ kind: 'bunch', track }),
     refresh: () => refresh(),
     close,
     get isOpen() {

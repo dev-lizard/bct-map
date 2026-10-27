@@ -6,6 +6,7 @@
 //   GET /api/reliability                   on-time performance by route, or by hour (?route=ID&days=7)
 //   GET /api/analytics                     bunching, cancellations and adherence by weather (?days=7)
 //   GET /api/segments                      measured bus running times between stops (?days=7)
+//   GET /api/bunching-track                both buses' GPS tracks around a bunching event (?key=date|leader|follower)
 //   GET /api/weather                       current conditions in Fort Lauderdale
 //   GET /api/radar                         time and tile URL of the latest rain radar
 //   GET /api/weather-alerts                active National Weather Service alerts for Broward
@@ -34,6 +35,7 @@ import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
 import { healthReport } from './health.mjs';
 import { ReliabilityLog } from './reliability.mjs';
 import { runningTimeByWeather, SegmentLog } from './segments.mjs';
+import { TrackLog, trackKey } from './tracks.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const WEB_DIR = path.join(ROOT, 'web');
@@ -123,12 +125,13 @@ console.log(`Analytics: ${analytics.bunching.length} bunching events on record`)
 
 // Logs kept as one JSON file per day, saved every DAILY_SAVE_MS and at shutdown: running times
 // between stops (server/segments.mjs) in data/segments/, canceled trips (server/cancellations.mjs)
-// in data/cancellations/.
+// in data/cancellations/, and bunching replays (server/tracks.mjs) in data/tracks/.
 const DAILY_KEEP_DAYS = 31;
 const DAILY_SAVE_MS = 10 * 60_000;
 const segments = new SegmentLog({ timezone });
 const cancellations = new CancellationLog({ timezone });
-const dailyLogs = [[segments, path.join(ROOT, 'data', 'segments')], [cancellations, path.join(ROOT, 'data', 'cancellations')]];
+const tracks = new TrackLog();
+const dailyLogs = [[segments, path.join(ROOT, 'data', 'segments')], [cancellations, path.join(ROOT, 'data', 'cancellations')], [tracks, path.join(ROOT, 'data', 'tracks')]];
 for (const [log, dir] of dailyLogs) {
   await fs.mkdir(dir, { recursive: true });
   for (const file of (await fs.readdir(dir)).filter(f => /^\d{8}\.json$/.test(f))) log.load(file.slice(0, 8), await fs.readFile(path.join(dir, file), 'utf8'));
@@ -225,11 +228,14 @@ async function refresh() {
   const vehicles = decodeFeed(feeds.vehiclePositions);
   const passages = [];
   const runs = segments.observe(vehicles, { trips: schedule.trips, stops, onPass: p => passages.push(p) });
+  tracks.observe(vehicles);
   recorded = reliability.observe(passages, schedule.trips);
   if (feeds.tripUpdates) {
     const { feedTs, trips } = summarizeTripUpdates(decodeFeed(feeds.tripUpdates), { trips: schedule.trips, timezone });
     const busOnTrip = busesOnTrips(vehicles);
-    bunches = analytics.observe(trips.values(), schedule.trips, busOnTrip);
+    const newBunches = analytics.observe(trips.values(), schedule.trips, busOnTrip);
+    for (const e of newBunches) tracks.capture(e, { leaderBus: busOnTrip.get(e.leader), followerBus: busOnTrip.get(e.follower) });
+    bunches = newBunches.length;
     const alerts = alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null);
     canceled = cancellations.observe({ liveTrips: trips.values(), trips: schedule.trips, feedTs, busOnTrip, alerts, passages });
   }
@@ -383,7 +389,13 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       weather = { error: `Weather history unavailable: ${err.message}` };
     }
-    return sendJson(req, res, 200, { windowDays: days, collectingSince: Math.floor(analyticsSince), ...analytics.summary({ days }), cancellations: cancellations.summary({ days }), weather });
+    const { bunching } = analytics.summary({ days });
+    bunching.recent = bunching.recent.map(e => ({ ...e, track: tracks.status(trackKey(e)) }));
+    return sendJson(req, res, 200, { windowDays: days, collectingSince: Math.floor(analyticsSince), bunching, cancellations: cancellations.summary({ days }), weather });
+  }
+  if (pathname === '/api/bunching-track') {
+    const track = tracks.get(searchParams.get('key') ?? '');
+    return track ? sendJson(req, res, 200, track) : sendJson(req, res, 404, { error: 'No track for this event' });
   }
   if (pathname === '/api/segments') {
     const result = segments.query({ days: intParam(searchParams.get('days'), 7, 1, 30) });

@@ -1345,3 +1345,65 @@ button.rel-row:hover {
   margin: 14px 14px 4px;
   font-size: 13px;
 }
+
+/* ---- Bunching replay -------------------------------------------------------------------------- */
+
+.replay-bus {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 14px 0;
+  font-size: 13px;
+}
+
+.replay-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--divider);
+}
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 14px 4px;
+}
+
+.replay-play {
+  flex: none;
+  width: 64px;
+  padding: 4px 0;
+}
+
+.replay-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--focus);
+}
+
+.replay-speed {
+  flex: none;
+  width: auto;
+}
+
+.replay-readout {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0 14px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-note {
+  margin: 10px 14px 0;
+}
+
+.replay-tag {
+  color: var(--focus);
+}

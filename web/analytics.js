@@ -15,8 +15,8 @@ const FEW_SAMPLES = 20;
 // route(routeId) -> route info for badges. stopName(stopId). stop(stopId) -> { lat, lon, name }.
 // tripInfo(tripId, serviceDate) -> { headsign, start (unix seconds) } or null. stopPairRoutes() ->
 // Map of "from>to" -> route ids. onSpeedMap(GeoJSON or null) draws or clears the speed layer.
-// onCanceled(record, related) opens a canceled trip's details.
-export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap, onCanceled }) {
+// onCanceled(record, related) opens a canceled trip's details; onBunching(event) replays one.
+export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap, onCanceled, onBunching }) {
   let days = 7;
   let request = 0;
   let speedPeriod = 'all';
@@ -140,12 +140,15 @@ export function createAnalytics({ route, stopName, stop, tripInfo, stopPairRoute
 
   function bunchingSection({ bunching: b }) {
     const rule = `Two buses on the same route and direction reaching a stop within ${b.rule.maxS / 60} minutes of each other, and within a quarter of the gap the timetable plans between them (${b.rule.minScheduledS / 60} minutes or more).`;
+    // Events with a recorded track open a replay; older ones (before replays existed) can't.
     const recent = b.recent.slice(0, SHOW_RECENT).map(e => {
-      const stop = el('button', { type: 'button', className: 'link' }, stopName(e.stopId) ?? e.stopId);
-      stop.addEventListener('click', () => onStop(e.stopId));
-      return el('div', { className: 'an-event' },
-        el('span', { className: 'an-when' }, formatWhen(e.at)), routeBadge(route(e.routeId)),
-        el('span', {}, stop, el('span', { className: 'status' }, ` ${minutes(e.actualS)} apart, timetabled ${minutes(e.scheduledS)}`)));
+      const label = el('span', {}, stopName(e.stopId) ?? e.stopId, el('span', { className: 'status' }, ` ${minutes(e.actualS)} apart, timetabled ${minutes(e.scheduledS)}`),
+        el('span', { className: `status ${e.track ? 'replay-tag' : ''}` }, e.track === 'ready' ? ' · ▶ Replay' : e.track === 'recording' ? ' · ▶ Replay (recording)' : ' · no replay'));
+      if (!e.track) return el('div', { className: 'an-event' }, el('span', { className: 'an-when' }, formatWhen(e.at)), routeBadge(route(e.routeId)), label);
+      const b = el('button', { type: 'button', className: 'an-event an-canceled' }, el('span', { className: 'an-when' }, formatWhen(e.at)), routeBadge(route(e.routeId)), label);
+      b.title = 'Replay the two buses on the map';
+      b.addEventListener('click', () => onBunching(e));
+      return b;
     });
     return el('section', { className: 'an-section' },
       el('div', { className: 'an-head' }, el('h3', {}, 'Bus bunching'), csvButton(`broward-bunching-${days}d.csv`, () => [

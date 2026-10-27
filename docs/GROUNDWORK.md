@@ -430,6 +430,19 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
   - **Cause:** Cloudflare stops an idle Durable Object between its once-a-minute ticks, and its memory goes with it. So no bus ever had a "previous report" to measure from, and the 10-minute save timer restarted with the object and never fired.
   - **Fix:** the per-bus tracking (`SegmentLog.exportTracking`) and every trip's GPS progress (`CancellationLog.exportProgress`) are saved in `state` at the end of every tick and restored on wake-up, and the day totals are saved every tick. That's about 4,300 row writes a day.
   - **Checked:** restarting `wrangler dev` between ticks; the first tick after the restart measured 89 runs from the saved positions. There's also a restart test in `test/segments.test.mjs`.
+**Phase 13 — bunching replays ✅ (built and tested locally)**
+
+- **Capture** (`server/tracks.mjs`): every bus's positions from the last 20 minutes are kept. When bunching is found, both buses' tracks from 15 minutes before the event to 15 minutes after are saved.
+  - **Size:** about 1–2 KB per event, so a month is well under 1 MB.
+  - **Storage:** the rolling buffer is saved every tick (the Durable Object may stop between ticks), and finished tracks go into `track_days` (Worker) or `data/tracks/` (Node).
+  - **Older events:** events from before this have no track and show "no replay".
+- **Replay** (`web/replay.js`, `renderBunching` in `web/panel.js`): clicking an event marked "▶ Replay" in Analytics opens the side panel and fits the map to both tracks.
+  - **On the map:** two ghost buses (blue ahead, amber behind) with labels and trails, moving along their trip's route shape between GPS reports.
+  - **Controls:** play or pause, a timeline, speeds of 10–120×, the time relative to the event, and the straight-line gap between the buses.
+  - **Cleanup:** closing the panel removes the ghosts.
+- **Checked:** with a made-up track along route 72's real shape (no real event had been captured yet). The ghosts follow Oakland Park Blvd and the gap closes from 1.2 to 0.8 mi as it plays.
+- **Also:** OpenFreeMap's dark style asks for a "wood-pattern" image it doesn't have, and MapLibre warned for every tile (thousands of console messages). A transparent stand-in is now added on `styleimagemissing`.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

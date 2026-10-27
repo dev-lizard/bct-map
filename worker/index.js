@@ -8,6 +8,7 @@
 //   GET /api/reliability   on-time performance by route, or by hour (?route=ID&days=7)
 //   GET /api/analytics     bunching, cancellations and adherence by weather (?days=7)
 //   GET /api/segments      measured bus running times between stops (?days=7)
+//   GET /api/bunching-track  both buses' GPS tracks around a bunching event (?key=date|leader|follower)
 //   GET /api/health        ok / degraded / down, with the checks behind it (503 when down)
 // A Cron Trigger runs the Recorder (recorder.js) every minute; it logs on-time performance in a
 // Durable Object's SQLite database and reports health. Everything else happens in the browser.
@@ -140,11 +141,15 @@ export default {
         }
         return json({ ...rest, weather });
       }
+      if (pathname === '/api/bunching-track') {
+        const track = await recorder(env).track(searchParams.get('key') ?? '');
+        return track ? json(track) : json({ error: 'No track for this event' }, 404);
+      }
       if (pathname === '/api/health') {
         const report = await recorder(env).health();
         return json(report, report.status === 'down' ? 503 : 200);
       }
-      if (pathname === '/') return json({ name: 'Broward Transit 3D API', endpoints: ['/api/rt', '/api/weather', '/api/radar', '/api/weather-alerts', '/api/storms', '/api/reliability', '/api/analytics', '/api/segments', '/api/health'] });
+      if (pathname === '/') return json({ name: 'Broward Transit 3D API', endpoints: ['/api/rt', '/api/weather', '/api/radar', '/api/weather-alerts', '/api/storms', '/api/reliability', '/api/analytics', '/api/segments', '/api/bunching-track', '/api/health'] });
       return json({ error: 'Not found' }, 404);
     } catch (err) {
       return json({ error: `Upstream unavailable: ${err.message}` }, 502);

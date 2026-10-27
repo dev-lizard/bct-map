@@ -39,7 +39,7 @@ export class AnalyticsLog {
     }
   }
 
-  // Records new bunching events from one batch of trip-update summaries.
+  // Records new bunching events from one batch of trip-update summaries, and returns them.
   // busOnTrip: busesOnTrips() of the vehicle feed.
   observe(liveTrips, trips, busOnTrip = null) {
     const bunches = newEvents(findBunching([...liveTrips], trips, { timezone: this.timezone, busOnTrip }), bunchKey, date => this.#seenFor('bunch', date));
@@ -51,7 +51,7 @@ export class AnalyticsLog {
         .then(() => Promise.all([...byDate].map(([date, l]) => fs.appendFile(path.join(this.dir, `${date}.jsonl`), `${l.map(x => JSON.stringify(x)).join('\n')}\n`))))
         .catch(err => console.error(`[analytics] could not save: ${err.message}`));
     }
-    return bunches.length;
+    return bunches;
   }
 
   flush() {

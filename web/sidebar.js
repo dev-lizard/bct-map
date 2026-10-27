@@ -25,7 +25,7 @@ const WIDE = new Set(['buses', 'analytics']);
 // search(query, limit): see search.js. settings: the live settings object (read only here).
 // onBus(vehicle) shows a bus. stopName, stop, tripInfo, stopPairRoutes and onSpeedMap serve the
 // Analytics panel (see analytics.js).
-export function createSidebar(railEl, panelEl, { routes, search, settings, onFilter, onShowRoute, onStop, onTrip, onBus, onSettings, onOpen, stopName, stop, tripInfo, stopPairRoutes, onSpeedMap, onCanceled }) {
+export function createSidebar(railEl, panelEl, { routes, search, settings, onFilter, onShowRoute, onStop, onTrip, onBus, onSettings, onOpen, stopName, stop, tripInfo, stopPairRoutes, onSpeedMap, onCanceled, onBunching }) {
   const routesById = new Map(routes.map(r => [r.routeId, r]));
   const routeOrder = new Map(routes.map((r, i) => [r.routeId, i]));
   // Route details for badges and sorting, with a grey fallback for a route the timetable lacks.
@@ -65,7 +65,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
     alerts: buildAlerts,
     buses: () => createBusTable({ route, onBus }),
     reliability: buildReliability,
-    analytics: () => createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap, onCanceled }),
+    analytics: () => createAnalytics({ route, stopName, stop, tripInfo, stopPairRoutes, onStop, onSpeedMap, onCanceled, onBunching }),
     settings: buildSettings,
   };
   const section = name => (sections[name] ??= builders[name]());

@@ -13,6 +13,7 @@ import { LiveFeed } from './live.js';
 import { serviceDayStart } from './gtfs-util.js';
 import { routesByStopPair, SPEED_BANDS } from './speeds.js';
 import { canceledTripDetails } from './canceled.js';
+import { createReplay } from './replay.js';
 import { createFrameMonitor, kmOutside, serviceArea } from './device.js';
 import { el, formatClock, formatDate, formatTime, formatWhen, icon, routeBadge, setTimeFormat } from './dom.js';
 import { linkSearch, parseLink } from './links.js';
@@ -586,6 +587,28 @@ function updateFilterNote() {
   );
 }
 
+// OpenFreeMap's dark style names a "wood-pattern" image it doesn't supply, and MapLibre warns about
+// it for every tile (thousands of console warnings). A transparent pixel stands in.
+map.on('styleimagemissing', e => {
+  if (!map.hasImage(e.id)) map.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
+});
+
+// Room to leave around a camera fit for the panels that are open.
+function cameraPadding() {
+  return isNarrow()
+    ? { top: 80, bottom: window.innerHeight * 0.5, left: 24, right: 24 }
+    : { top: 60, bottom: 60, left: sidebar?.isOpen ? 416 : 72, right: panel.isOpen ? 384 : 24 };
+}
+
+// Bunching replays (Analytics → a bunching event): ghost buses along their route shapes.
+const replay = createReplay({
+  map,
+  line(tripId) {
+    const shaped = shapeLine(live?.trips[tripId]?.sh);
+    return shaped ? { line: shaped, toScene, fromScene } : null;
+  },
+});
+
 function fitRoute(routeId) {
   const bounds = new maplibregl.LngLatBounds();
   let points = 0;
@@ -596,10 +619,7 @@ function fitRoute(routeId) {
     }
   }
   if (!points) return;
-  const padding = isNarrow()
-    ? { top: 80, bottom: window.innerHeight * 0.5, left: 24, right: 24 }
-    : { top: 60, bottom: 60, left: sidebar?.isOpen ? 416 : 72, right: panel.isOpen ? 384 : 24 };
-  map.fitBounds(bounds, { padding, maxZoom: 15.5, duration: 900 });
+  map.fitBounds(bounds, { padding: cameraPadding(), maxZoom: 15.5, duration: 900 });
 }
 
 // ---- 3D vehicles -----------------------------------------------------------------------------
@@ -1135,6 +1155,18 @@ let pendingTripFocus = null; // trip id from a link whose bus hasn't appeared in
 const panel = createPanel(document.getElementById('panel'), {
   load(view) {
     if (!live) throw new Error('The timetable has not loaded.');
+    if (view.kind === 'bunch') {
+      const { track } = view;
+      const bounds = replay.start(track);
+      if (bounds) map.fitBounds(bounds, { padding: cameraPadding(), maxZoom: 16, duration: 900 });
+      return {
+        track,
+        route: live.routeInfo(track.routeId),
+        stopName: stopsById.get(track.stopId)?.name ?? null,
+        buses: track.buses.map(b => ({ ...b, headsign: live.trips[b.tripId]?.h ?? null })),
+        replay,
+      };
+    }
     if (view.kind === 'canceled') {
       const details = canceledTripDetails(view.record, {
         trips: live.trips, calendar: live.calendar, exceptions: live.exceptions, timezone: live.timezone,
@@ -1159,6 +1191,7 @@ const panel = createPanel(document.getElementById('panel'), {
   isFollowing: vehicleId => followedId === vehicleId,
   onView(view) {
     panelView = view;
+    if (view?.kind !== 'bunch') replay.stop();
     if (!view) {
       stopFollow();
       selectBus(null);
@@ -1226,6 +1259,18 @@ function createShell() {
     stop: stopId => stopsById.get(stopId) ?? null,
     stopPairRoutes: () => (stopPairRoutesCache ??= live ? routesByStopPair(live.trips) : new Map()),
     onSpeedMap: showSpeedLayer,
+    async onBunching(event) {
+      const key = `${event.date}|${event.leader}|${event.follower}`;
+      try {
+        const track = await getApiJson(`/api/bunching-track?key=${encodeURIComponent(key)}`);
+        stopFollow();
+        selectBus(null);
+        selectStop(null);
+        panel.showBunching(track);
+      } catch (err) {
+        showToast?.(`Couldn't load this replay: ${err.message}`);
+      }
+    },
     onCanceled(record, related) {
       stopFollow();
       selectBus(null);
