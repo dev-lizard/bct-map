@@ -4,7 +4,7 @@
 import { serviceDayStart, servicesOn } from './gtfs-util.js';
 
 // A bus seen passing at least this share of the trip's stops ran it, cancellation or not.
-const RAN_SHARE = 0.5;
+export const RAN_SHARE = 0.5;
 
 // schedule: { trips, calendar, exceptions, timezone }. stopName(id) -> name or null. nowS: the
 // time now, so a trip still under way is reported as being watched rather than missed.

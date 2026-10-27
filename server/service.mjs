@@ -1,9 +1,10 @@
 // Service analytics measured from what buses did, shared by the Node server and the Worker's Durable
 // Object, kept as one JSON value per day:
 //
-//   - Service delivered: which scheduled trips a bus was seen running (vehicle feed or GPS), and
-//     which minutes the recorder was running, so a trip with no bus counts as missed only when the
-//     recorder was watching for its whole run. Trips BCT marked canceled are counted apart.
+//   - Service delivered: which scheduled trips a bus was seen running (vehicle feed or GPS), the
+//     stretch of each trip GPS saw it run, and which minutes the recorder was running, so a trip
+//     with no bus counts as missed, and one run only in part as partial, only when the recorder was
+//     watching for its whole run. Trips BCT marked canceled are counted apart.
 //   - Prediction accuracy: BCT's predicted time at each timepoint, sampled when the bus was 0-2,
 //     2-5, 5-10, 10-20 and 20-30 minutes away, against when GPS saw it pass.
 //   - Headways: on frequent service (timetabled 20 minutes apart or less), the gap between buses
@@ -47,6 +48,9 @@ const HUB_RECENT_S = 60 * 60; // buses at a hub are paired with others seen with
 const TRIP_DONE_AFTER_S = 10 * 60; // no new stops passed for this long: the trip is over
 const RUNTIME_MIN_SHARE = 0.8; // the stops seen must cover this share of the trip's timetabled time
 const COVERAGE_MIN = 0.9; // share of a trip's minutes the recorder must have run to judge it
+// A trip ran only in part when GPS first saw it this far into its timetable, or last saw it this
+// far before its end.
+export const PARTIAL_S = 15 * 60;
 const RECORDING_GAP_S = 180; // the recorder was off for longer than this: don't call trips dropped
 const MAX_LIST = 300;
 
@@ -56,7 +60,7 @@ const FEED_KEYS = ['reports', 'stale', 'gaps', 'dropouts', 'predictedTrips', 'ti
 
 function newDay() {
   return {
-    seen: new Set(), coverage: new Array(1440).fill(0), pred: {}, predHour: {}, headway: {}, headwayStop: {}, runtime: {},
+    seen: new Set(), span: {}, coverage: new Array(1440).fill(0), pred: {}, predHour: {}, headway: {}, headwayStop: {}, runtime: {},
     ontime: {}, delayStop: {}, transfers: {}, feed: Object.fromEntries(FEED_KEYS.map(k => [k, 0])), feedRoute: {},
   };
 }
@@ -200,6 +204,14 @@ export class ServiceLog {
       const serviceDate = p.startDate || this.#serviceDate(trip, time);
       const dayStart = serviceDayStart(serviceDate, this.timezone);
       if (!this.#days.get(serviceDate)?.seen.has(p.tripId)) this.#day(serviceDate).seen.add(p.tripId);
+      // The stretch of the trip GPS has seen: earliest and latest timetabled seconds passed.
+      if (row?.[2] != null) {
+        const span = this.#day(serviceDate).span;
+        const seen = span[p.tripId];
+        if (!seen) span[p.tripId] = [row[2], row[2]];
+        else if (row[2] < seen[0]) seen[0] = row[2];
+        else if (row[2] > seen[1]) seen[1] = row[2];
+      }
 
       // Prediction outcomes.
       const pending = this.#pending.get(`${p.tripId}|${p.seq}`);
@@ -378,7 +390,7 @@ export class ServiceLog {
       days,
       buckets: LEAD_BUCKETS,
       predictionWindow: { earlyS: PREDICTION_EARLY_S, lateS: PREDICTION_LATE_S },
-      rules: { lateStartS: LATE_START_S, minTransferS: MIN_TRANSFER_S, maxConnectionWaitS: MAX_CONNECTION_WAIT_S, staleS: STALE_S, gpsGapS: GPS_GAP_S, dropoutRemainingS: DROPOUT_REMAINING_S },
+      rules: { partialS: PARTIAL_S, lateStartS: LATE_START_S, minTransferS: MIN_TRANSFER_S, maxConnectionWaitS: MAX_CONNECTION_WAIT_S, staleS: STALE_S, gpsGapS: GPS_GAP_S, dropoutRemainingS: DROPOUT_REMAINING_S },
       delivered,
       predictions: this.#predictions(dates),
       headways: this.#headways(dates),
@@ -428,11 +440,13 @@ export class ServiceLog {
     const byRoute = new Map();
     const byDate = [];
     const missed = [];
+    const partial = [];
     for (const date of dates) {
       const running = servicesOn(date, calendar, exceptions);
       const dayStart = serviceDayStart(date, this.timezone);
       const seen = this.#days.get(date)?.seen ?? new Set();
-      const counts = { date, scheduled: 0, operated: 0, canceled: 0, missed: 0, unknown: 0 };
+      const spans = this.#days.get(date)?.span ?? {};
+      const counts = { date, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 };
       for (const [tripId, trip] of Object.entries(trips)) {
         if (!running.has(trip.sv)) continue;
         const timed = trip.s.filter(r => r[2] != null);
@@ -441,21 +455,33 @@ export class ServiceLog {
         const end = dayStart + timed.at(-1)[2];
         if (end + 1800 > nowS) continue; // not over yet
         let status;
-        if (seen.has(tripId)) status = 'operated';
-        else if (canceled.has(`${date}|${tripId}`)) status = 'canceled';
+        let part = null;
+        if (seen.has(tripId)) {
+          // Seen only in the vehicle feed (no stops passed), or with gaps in recording: counted as run.
+          const span = spans[tripId];
+          const late = span ? span[0] - timed[0][2] : 0;
+          const early = span ? timed.at(-1)[2] - span[1] : 0;
+          if ((late >= PARTIAL_S || early >= PARTIAL_S) && covered(start - 600, end + 600) >= COVERAGE_MIN) {
+            status = 'partial';
+            part = { notRunStartS: late, notRunEndS: early, fromStop: timed.find(r => r[2] === span[0])?.[1] ?? null, toStop: timed.findLast(r => r[2] === span[1])?.[1] ?? null };
+          } else status = 'operated';
+        } else if (canceled.has(`${date}|${tripId}`)) status = 'canceled';
         else if (covered(start - 600, end + 600) >= COVERAGE_MIN) status = 'missed';
         else status = 'unknown';
         counts.scheduled++;
         counts[status]++;
-        const r = byRoute.get(trip.r) ?? byRoute.set(trip.r, { routeId: trip.r, scheduled: 0, operated: 0, canceled: 0, missed: 0, unknown: 0 }).get(trip.r);
+        const r = byRoute.get(trip.r) ?? byRoute.set(trip.r, { routeId: trip.r, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 }).get(trip.r);
         r.scheduled++;
         r[status]++;
         if (status === 'missed') missed.push({ date, tripId, routeId: trip.r, start });
+        if (part) partial.push({ date, tripId, routeId: trip.r, start, ...part });
       }
       byDate.push(counts);
     }
     missed.sort((a, b) => b.start - a.start);
-    return { byRoute: [...byRoute.values()], byDate, missed: missed.slice(0, MAX_LIST) };
+    partial.sort((a, b) => b.start - a.start);
+    // operated: ran in full (or as far as anyone can tell). partial: GPS saw only part of it run.
+    return { byRoute: [...byRoute.values()], byDate, missed: missed.slice(0, MAX_LIST), partial: partial.slice(0, MAX_LIST) };
   }
 
   #predictions(dates) {

@@ -24,7 +24,7 @@ test('service delivered: operated, canceled, missed, and unknown when the record
   const log = new ServiceLog({ timezone: TZ });
   recordMorning(log);
   let s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
-  assert.deepEqual(s.delivered.byDate[0], { date: '20261022', scheduled: 3, operated: 2, canceled: 0, missed: 1, unknown: 0 });
+  assert.deepEqual(s.delivered.byDate[0], { date: '20261022', scheduled: 3, operated: 2, partial: 0, canceled: 0, missed: 1, unknown: 0 });
   assert.deepEqual(s.delivered.missed.map(m => m.tripId), ['T3']);
   s = log.summary({ days: 1, schedule, canceled: new Set(['20261022|T3']), nowS: day + 12 * H });
   assert.equal(s.delivered.byDate[0].canceled, 1);
@@ -129,4 +129,22 @@ test('schedule: routes and weekday departures by stop', () => {
   const sched = toSchedule({ meta: { timezone: TZ }, calendar, exceptions: [], trips });
   assert.deepEqual([...sched.routesByStop().get('B')], ['R1']);
   assert.deepEqual(Object.fromEntries(sched.departuresByStop(new Set(['WK']))), { A: 3, B: 3 }); // C is where they end
+});
+
+test('service delivered: a trip GPS saw run only part of the way is partial', () => {
+  // L runs A 8:00, B 8:20, C 8:40. GPS saw it leave A and pass B, then nothing: the last 20 minutes weren't run.
+  const longTrips = { L: { r: 'R1', d: 0, sv: 'WK', s: [[1, 'A', 8 * H, 1], [2, 'B', 8 * H + 1200], [3, 'C', 8 * H + 2400, 1]] } };
+  const sched = { trips: longTrips, calendar, exceptions: [] };
+  const run = passages => {
+    const log = new ServiceLog({ timezone: TZ });
+    for (let t = day + 7.5 * H; t <= day + 9.5 * H; t += 60) log.observe({ vehicles: vehicles(t, t < day + 8.4 * H ? ['L'] : []), trips: longTrips, nowS: t });
+    log.observe({ passages, trips: longTrips, nowS: day + 9.5 * H });
+    return log.summary({ days: 1, schedule: sched, nowS: day + 12 * H }).delivered;
+  };
+  let d = run([pass('L', 1, day + 8 * H + 30), pass('L', 2, day + 8 * H + 1250)]);
+  assert.equal(d.byDate[0].partial, 1);
+  assert.deepEqual(d.partial.map(({ tripId, notRunStartS, notRunEndS, fromStop, toStop }) => ({ tripId, notRunStartS, notRunEndS, fromStop, toStop })),
+    [{ tripId: 'L', notRunStartS: 0, notRunEndS: 1200, fromStop: 'A', toStop: 'B' }]);
+  d = run([pass('L', 1, day + 8 * H + 30), pass('L', 2, day + 8 * H + 1250), pass('L', 3, day + 8 * H + 2450)]);
+  assert.deepEqual([d.byDate[0].operated, d.byDate[0].partial], [1, 0]); // the whole way: ran in full
 });

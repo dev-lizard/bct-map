@@ -489,6 +489,15 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **The key:** it's private (the public tracker page uses another), so the address lives in the environment: a Worker secret, or an environment variable for the Node server. Errors leave the address out, since `/api/health` shows them.
 - **Checked:** 3 more tests (108); live, the bundle carried 10 contracted buses and 18 trip updates, and the Buses table showed each with its next stop and delay.
 
+**Phase 17 — partial trips in service delivered ✅ (built and tested locally)**
+
+- **What:** "ran" is split into ran in full and ran only partly. Each day now keeps, per trip, the earliest and latest timetabled time of the stops GPS saw it pass. A trip is partial when that starts 15+ minutes into its timetable or ends 15+ minutes before its end, and the recorder was running for the whole trip. Trips seen only in the vehicle feed (no stops passed), and days recorded before this, count as in full.
+- **Caveat:** a bus whose GPS fails mid-trip, or a detour that takes it off its stops at the end, looks the same as a trip cut short; the Feed tab's "vanished" count is the GPS side of it.
+- **Panel:** the Service tab's headline is now "ran in full", with a hatched "only partly" segment in the day bars, a Partly column by route, and a list of partial trips saying which end wasn't run (each opens the trip). Trends' column is "In full".
+- **Canceled trips:** each in the list now says what share of the trip's stops GPS saw its bus pass ("partly run: 21% of the trip (15 of 73 stops)", or "ran anyway" from half the stops up, as the trip details already judged it), with "so far" while the trip is still timetabled to be running. The CSV gains `trip_stops` and `pct_of_stops_run`. Stops count once each, in order, from when the recorder first saw the trip, so a trip already under way when the recorder started reads low.
+- **Tests:** 1 more (109 in all).
+- **Note:** before the contracted routes' feeds were merged (Phase 16), their trips counted as missed without notice; those days' numbers for routes 4, 6, 15, 23 and 56 are wrong and age out after 30 days.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

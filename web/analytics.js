@@ -18,7 +18,7 @@ import { getApiJson } from './api.js';
 import { addDays } from './gtfs-util.js';
 import { csvTime, downloadCsv } from './csv.js';
 import { el, formatDate, formatTime, formatWhen, routeBadge } from './dom.js';
-import { verdictLabel } from './panel.js';
+import { sharePct, verdictLabel } from './panel.js';
 import { slowest, SPEED_BANDS, speedFeatures, speedTable } from './speeds.js';
 
 const PERIODS = [[1, 'Today'], [7, '7 days'], [30, '30 days']];
@@ -33,7 +33,7 @@ const FEW = 20;
 const DIRECTIONS = ['outbound', 'inbound'];
 
 // routes: [{ routeId, routeShortName, ... }] in display order. route(routeId) -> route info.
-// stopName(id); stop(id) -> { lat, lon, name }; tripInfo(tripId, serviceDate) -> { headsign, start }.
+// stopName(id); stop(id) -> { lat, lon, name }; tripInfo(tripId, serviceDate) -> { headsign, start, end, stops }.
 // stopPairRoutes() -> Map "from>to" -> route ids. shelterStops() -> [{ id, name, city, routes,
 // amenities, buses (a weekday) }]. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
 // onCanceled(record, related); onBunching(event). settings: for the 12/24-hour clock.
@@ -143,29 +143,35 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     if (s.error) return failed('service data', s.error);
     const d = s.delivered;
     const rows = routeId ? d.byRoute.filter(r => r.routeId === routeId) : d.byRoute;
-    const t = rows.reduce((a, r) => ({ scheduled: a.scheduled + r.scheduled, operated: a.operated + r.operated, canceled: a.canceled + r.canceled, missed: a.missed + r.missed, unknown: a.unknown + r.unknown }), { scheduled: 0, operated: 0, canceled: 0, missed: 0, unknown: 0 });
+    const t = rows.reduce((a, r) => { for (const k of Object.keys(a)) a[k] += r[k] ?? 0; return a; }, { scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 });
     const judged = t.scheduled - t.unknown;
     const pct = (n, of) => (of ? `${Math.round((1000 * n) / of) / 10}%` : '–');
-    const missed = d.missed.filter(m => !routeId || m.routeId === routeId);
-    const missedRows = missed.slice(0, shown.missed ?? SHOW).map(m => {
+    const mine = list => (list ?? []).filter(m => !routeId || m.routeId === routeId);
+    const tripRow = (m, note, className) => {
       const info = tripInfo(m.tripId, m.date);
       const b = el('button', { type: 'button', className: 'an-event an-canceled' },
-        el('span', { className: 'an-when' }, formatWhen(m.start)), routeBadge(route(m.routeId)), el('span', {}, info?.headsign ?? m.tripId, el('span', { className: 'status cancel-missed' }, ' · no bus seen, not announced')));
+        el('span', { className: 'an-when' }, formatWhen(m.start)), routeBadge(route(m.routeId)), el('span', {}, info?.headsign ?? m.tripId, el('span', { className: `status ${className}` }, ` · ${note}`)));
       b.title = 'Open this trip\'s timetable';
       b.addEventListener('click', () => onTrip(m.tripId, m.date));
       return b;
-    });
+    };
+    const missed = mine(d.missed);
+    const partial = mine(d.partial);
+    const partNote = m => [
+      m.notRunStartS >= s.rules.partialS && `first ${Math.round(m.notRunStartS / 60)} min not run`,
+      m.notRunEndS >= s.rules.partialS && `last ${Math.round(m.notRunEndS / 60)} min not run`,
+    ].filter(Boolean).join(', ');
     return [
       head('Service delivered', csvButton(`broward-service-delivered-${days}d.csv`, () => [
-        ['route', 'scheduled_trips', 'ran', 'canceled', 'missed_unannounced', 'not_judged', 'delivered_pct'],
-        ...d.byRoute.map(r => [route(r.routeId).routeShortName, r.scheduled, r.operated, r.canceled, r.missed, r.unknown, judgedPct(r)]),
+        ['route', 'scheduled_trips', 'ran_in_full', 'ran_in_part', 'canceled', 'missed_unannounced', 'not_judged', 'ran_in_full_pct'],
+        ...d.byRoute.map(r => [route(r.routeId).routeShortName, r.scheduled, r.operated, r.partial ?? 0, r.canceled, r.missed, r.unknown, judgedPct(r)]),
       ], d.byRoute.length)),
       // Until the recorder has watched some trips from start to finish, a percentage would mislead.
-      t.operated + t.missed > 0
-        ? el('p', { className: 'an-stat' }, el('strong', {}, pct(t.operated, judged)), ` of ${judged.toLocaleString('en-US')} scheduled trips ran (${routeText()}, ${periodText()})`)
+      t.operated + t.partial + t.missed > 0
+        ? el('p', { className: 'an-stat' }, el('strong', {}, pct(t.operated, judged)), ` of ${judged.toLocaleString('en-US')} scheduled trips ran in full (${routeText()}, ${periodText()})`)
         : el('p', { className: 'empty' }, 'Not enough recording yet: a trip is judged once the recorder has watched its whole run and it has been over for half an hour.'),
-      el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} ran · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
-      el('p', { className: 'status' }, 'A trip ran if a bus was seen on it, in the vehicle feed or by GPS. "Missed without notice": no bus ever showed and BCT never marked it canceled. Only finished trips count.'),
+      el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} in full · ${t.partial} only partly · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
+      el('p', { className: 'status' }, `A trip ran if a bus was seen on it, in the vehicle feed or by GPS. Only partly: GPS first saw it ${s.rules.partialS / 60}+ minutes into its timetable, or last saw it ${s.rules.partialS / 60}+ minutes before the end; a bus whose GPS failed looks the same (see Feed). Missed without notice: no bus ever showed and BCT never marked it canceled. Only finished trips count.`),
       serviceLegend(),
       // Day-by-day counts are kept for all routes together.
       !routeId && d.byDate.length > 1 && el('h4', {}, 'By day'),
@@ -173,32 +179,37 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       !routeId && el('h4', {}, 'By route (worst first)'),
       !routeId && table('service-routes', [
         { key: 'route', label: 'Route', value: r => route(r.routeId).order ?? 999, render: r => routeBadge(route(r.routeId)) },
-        { key: 'delivered', label: 'Ran', num: true, value: r => judgedPct(r) ?? 101, render: r => (judgedPct(r) == null ? '–' : `${judgedPct(r)}%`) },
+        { key: 'delivered', label: 'In full', num: true, value: r => judgedPct(r) ?? 101, render: r => (judgedPct(r) == null ? '–' : `${judgedPct(r)}%`) },
+        { key: 'partial', label: 'Partly', num: true, value: r => r.partial ?? 0 },
         { key: 'canceled', label: 'Canceled', num: true, value: r => r.canceled },
         { key: 'missed', label: 'Missed', num: true, value: r => r.missed },
         { key: 'scheduled', label: 'Trips', num: true, value: r => r.scheduled - r.unknown },
       ], d.byRoute, { sort: { key: 'delivered', dir: 1 }, onRow: r => setRoute(r.routeId) }),
-      missedRows.length > 0 && el('h4', {}, `Missed without notice (${missed.length})`),
-      ...missedRows,
+      partial.length > 0 && el('h4', {}, `Ran only partly (${partial.length})`),
+      ...partial.slice(0, shown.partial ?? SHOW).map(m => tripRow(m, partNote(m), '')),
+      moreButton('partial', partial.length),
+      missed.length > 0 && el('h4', {}, `Missed without notice (${missed.length})`),
+      ...missed.slice(0, shown.missed ?? SHOW).map(m => tripRow(m, 'no bus seen, not announced', 'cancel-missed')),
       moreButton('missed', missed.length),
       ...cancellations(),
     ];
   }
 
+  // The share of judged trips that ran in full.
   const judgedPct = r => (r.scheduled - r.unknown ? Math.round((1000 * r.operated) / (r.scheduled - r.unknown)) / 10 : null);
 
   function serviceLegend() {
     return el('div', { className: 'rel-legend an-legend' },
-      ...[['ran', 'Ran'], ['canceled', 'Canceled'], ['missed', 'Missed without notice']].map(([k, label]) => el('span', {}, el('span', { className: `rel-swatch svc-${k}` }), label)));
+      ...[['ran', 'In full'], ['partial', 'Only partly'], ['canceled', 'Canceled'], ['missed', 'Missed without notice']].map(([k, label]) => el('span', {}, el('span', { className: `rel-swatch svc-${k}` }), label)));
   }
 
   function dayRows(byDate) {
     return byDate.map(d => {
       const judged = d.scheduled - d.unknown;
       const bar = el('div', { className: 'rel-bar', ariaHidden: 'true' });
-      for (const [k, n] of [['ran', d.operated], ['canceled', d.canceled], ['missed', d.missed]]) {
+      for (const [k, label, n] of [['ran', 'In full', d.operated], ['partial', 'Only partly', d.partial ?? 0], ['canceled', 'Canceled', d.canceled], ['missed', 'Missed', d.missed]]) {
         if (!n) continue;
-        const seg = el('span', { className: `rel-seg svc-${k}`, title: `${k}: ${n}` });
+        const seg = el('span', { className: `rel-seg svc-${k}`, title: `${label}: ${n}` });
         seg.style.flexGrow = String(n);
         bar.append(seg);
       }
@@ -216,19 +227,19 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       const info = tripInfo(r.tripId, r.date);
       const b = el('button', { type: 'button', className: 'an-event an-canceled' },
         el('span', { className: 'an-when' }, info?.start ? formatWhen(info.start) : formatWhen(r.firstSeenAt)), routeBadge(route(r.routeId)),
-        el('span', {}, info?.headsign ?? r.tripId, el('span', { className: `status cancel-${r.stopsPassed > 0 ? 'ran' : r.restoredAt != null ? 'restored' : 'missed'}` }, ` · ${verdictLabel(r)}`)));
+        el('span', {}, info?.headsign ?? r.tripId, el('span', { className: `status cancel-${r.stopsPassed > 0 ? 'ran' : r.restoredAt != null ? 'restored' : 'missed'}` }, ` · ${verdictLabel(r, info?.stops)}${r.stopsPassed > 0 && info?.end > Date.now() / 1000 ? ' so far' : ''}`)));
       b.title = 'Show the details of this canceled trip';
       b.addEventListener('click', () => onCanceled(r, c.recent.filter(x => x.routeId === r.routeId && x.date === r.date)));
       return b;
     });
     return [
       head(`Canceled trips (${records.length})`, csvButton(`broward-cancellations-${days}d.csv`, () => [
-        ['service_date', 'route', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened'],
+        ['service_date', 'route', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened', 'trip_stops', 'pct_of_stops_run'],
         ...records.map(r => {
           const info = tripInfo(r.tripId, r.date);
           return [r.date, route(r.routeId).routeShortName, r.tripId, info?.headsign, csvTime(info?.start), csvTime(r.firstSeenAt), csvTime(r.lastSeenAt), csvTime(r.restoredAt),
             r.vehicles.join(' '), r.stopsPassed, csvTime(r.firstPassAt), csvTime(r.lastPassAt), csvTime(r.predictedStartAt),
-            r.alerts.map(a => [a.header, a.description].filter(Boolean).join(': ')).join(' | '), verdictLabel(r)];
+            r.alerts.map(a => [a.header, a.description].filter(Boolean).join(': ')).join(' | '), verdictLabel(r, info?.stops), info?.stops, info?.stops ? sharePct(r, info.stops) : ''];
         }),
       ], records.length)),
       el('p', { className: 'status' }, 'BCT also marks trips canceled that buses then run, often with a "Delayed" alert: each shows what GPS saw. Click one for the details.'),
@@ -654,7 +665,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         date: d.date,
         departures: ot?.[0] ?? 0,
         onTime: ot?.[0] ? rate(ot[0] - ot[1] - ot[2], ot[0]) : null,
-        delivered: !routeId && del.operated + del.missed ? rate(del.operated, judged) : null,
+        delivered: !routeId && del.operated + (del.partial ?? 0) + del.missed ? rate(del.operated, judged) : null,
         predictions: pr?.[0] ? rate(pr[1], pr[0]) : null,
         excess: routeId ? null : excessOf(d.headway),
         transfers: !routeId && d.transfers[0] ? rate(d.transfers[1], d.transfers[0]) : null,
@@ -664,9 +675,9 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         heavy: wet[d.date]?.[1] ?? 0,
       };
     }).filter(r => r.departures || r.predictions != null || r.delivered != null || r.bunching || r.canceled);
-    const intro = el('p', { className: 'status' }, `Each measure day by day (${routeText()}). Ran, excess wait and transfers are for all routes together. Rain is hours with rain at any of Broward's airport weather stations.`);
+    const intro = el('p', { className: 'status' }, `Each measure day by day (${routeText()}). In full (trips that ran the whole way), excess wait and transfers are for all routes together. Rain is hours with rain at any of Broward's airport weather stations.`);
     const csv = csvButton(`broward-trends-${routeId ? route(routeId).routeShortName : 'all'}-${days}d.csv`, () => [
-      ['date', 'departures_timed', 'on_time_pct', 'trips_ran_pct', 'predictions_accurate_pct', 'excess_wait_s', 'transfers_made_pct', 'bunching_events', 'canceled_trips', 'rain_hours', 'heavy_rain_hours'],
+      ['date', 'departures_timed', 'on_time_pct', 'trips_ran_in_full_pct', 'predictions_accurate_pct', 'excess_wait_s', 'transfers_made_pct', 'bunching_events', 'canceled_trips', 'rain_hours', 'heavy_rain_hours'],
       ...rows.map(r => [r.date, r.departures, r.onTime, r.delivered, r.predictions, r.excess, r.transfers, r.bunching, r.canceled, r.rain, r.heavy]),
     ], rows.length);
     if (!rows.length) return [head('Trends', csv), intro, el('p', { className: 'empty' }, 'Nothing recorded yet.')];
@@ -698,7 +709,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     parts.push(el('h4', {}, 'By day'), table('trend-days', [
       { key: 'date', label: 'Day', value: r => r.date, render: r => dateLabel(r.date) },
       { key: 'onTime', label: 'On time', num: true, value: r => r.onTime ?? -1, render: r => pctCell(r.onTime, r.departures) },
-      { key: 'delivered', label: 'Ran', num: true, value: r => r.delivered ?? -1, render: r => pctCell(r.delivered) },
+      { key: 'delivered', label: 'In full', num: true, value: r => r.delivered ?? -1, render: r => pctCell(r.delivered) },
       { key: 'predictions', label: 'Predictions', num: true, value: r => r.predictions ?? -1, render: r => pctCell(r.predictions) },
       { key: 'excess', label: 'Excess wait', num: true, value: r => r.excess ?? -1e9, render: r => (r.excess == null ? '–' : signed(r.excess)) },
       { key: 'transfers', label: 'Transfers', num: true, value: r => r.transfers ?? -1, render: r => pctCell(r.transfers) },
@@ -737,7 +748,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       return total ? w.reduce((t, r) => t + r[key] * (weight ? r[weight] : 1), 0) / total : null;
     };
     const measures = [
-      ['On time', 'onTime', 'departures', 1, '%'], ['Trips ran', 'delivered', null, 1, '%'], ['Predictions accurate', 'predictions', null, 1, '%'],
+      ['On time', 'onTime', 'departures', 1, '%'], ['Trips ran in full', 'delivered', null, 1, '%'], ['Predictions accurate', 'predictions', null, 1, '%'],
       ['Transfers made', 'transfers', null, 1, '%'], ['Excess wait', 'excess', null, -1, 's'], ['Bunching a day', 'bunching', null, -1, ''], ['Canceled a day', 'canceled', null, -1, ''],
     ];
     return [el('h4', {}, 'Last 7 days against the 7 before'), ...measures.map(([label, key, weight, better, unit]) => {

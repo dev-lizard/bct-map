@@ -3,6 +3,7 @@
 // tripStopTimes in web/live.js, or canceledTripDetails in web/canceled.js).
 import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 import { directionsUrl } from './links.js';
+import { RAN_SHARE } from './canceled.js';
 import { GHOST_COLORS } from './replay.js';
 
 // "On time", "4 min late", "3 min early", from seconds of delay.
@@ -334,8 +335,12 @@ function noticeText(noticeS) {
   return noticeS > 0 ? `${span} before it was due to leave` : `${span} after it was due to leave`;
 }
 
-// Short label for a canceled-trip record in lists.
-export function verdictLabel(r) {
+// The share of a trip's stops GPS saw a canceled trip's bus pass, as a whole percentage.
+export const sharePct = (r, stops) => Math.min(100, Math.round((100 * r.stopsPassed) / stops));
+
+// Short label for a canceled-trip record in lists. stops: how many stops the trip has, if known.
+export function verdictLabel(r, stops = null) {
+  if (r.stopsPassed > 0 && stops) return `${r.stopsPassed >= stops * RAN_SHARE ? 'ran anyway' : 'partly run'}: ${sharePct(r, stops)}% of the trip (${r.stopsPassed} of ${stops} stops)`;
   if (r.stopsPassed > 0) return `ran anyway (${r.stopsPassed} stops seen)`;
   if (r.restoredAt != null) return 'back on the schedule';
   if (r.vehicles?.length) return `bus ${r.vehicles[0]} assigned`;
