@@ -42,3 +42,12 @@ test('a failed or overdue nightly rebuild degrades', () => {
   assert.match(failed.checks.find(c => c.name === 'nightly-build').detail, /HTTP 503/);
   assert.equal(healthReport({ ...healthy, lastBuild: null, builtAtS: nowS - 40 * 3600 }).status, 'degraded');
 });
+
+test('the Worker database: degraded past 60% of a daily free-plan limit, down past 95%', () => {
+  const usage = (read, written) => ({ read, written, readLimit: 5_000_000, writtenLimit: 100_000 });
+  const level = u => healthReport({ ...healthy, dbUsage: u }).checks.find(c => c.name === 'database').level;
+  assert.equal(level(usage(200_000, 30_000)), 'ok');
+  assert.equal(level(usage(3_500_000, 30_000)), 'degraded');
+  assert.equal(level(usage(200_000, 97_000)), 'down');
+  assert.equal(healthReport(healthy).checks.some(c => c.name === 'database'), false); // the Node server: no such limit
+});

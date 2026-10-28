@@ -498,6 +498,22 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **Tests:** 1 more (109 in all).
 - **Note:** before the contracted routes' feeds were merged (Phase 16), their trips counted as missed without notice; those days' numbers for routes 4, 6, 15, 23 and 56 are wrong and age out after 30 days.
 
+**Phase 18 — staying inside the Durable Object's free plan ✅ (built and measured locally)**
+
+- **What happened:** at 5 AM on Oct 28 the Worker hit the free plan's 5 million rows read a day, and stopped recording and answering until midnight UTC. Cloudflare evicts the object between most ticks, and each wake-up read every row of `seen` (one per departure for 3 days), `counts` (one per date, route and hour for 30 days) and `bunching`: tens of thousands of rows, most minutes.
+- **Fix:**
+  - On-time counts are now one row per service date (`ontime_days`), like the other logs; the old `counts` rows were moved over once on the first wake-up.
+  - `seen` and `bunching` are no longer read into memory. A departure or event is new when its `INSERT OR IGNORE` writes a row; summaries query only their window.
+  - A wake-up now reads the per-day rows and saved state: about 125 rows.
+  - Then three more, the same day:
+    - **The timetable is kept in the database** (`timetable`, gzipped: 144 KB and 97 KB). A wake-up used to download schedule.json and stops.json from GitHub Pages, about 2.4 MB most minutes (an estimated 2 to 3 GB a day). Now it reads two rows, and downloads only when the 10-minute manifest check finds a new build. Checked by restarting `wrangler dev` with PAGES_URL unreachable: it still recorded departures.
+    - **Older days load when asked.** A wake-up reads only the last two days of the per-day logs (ticks only touch today and yesterday); the Analytics endpoints read further back for their window. A wake-up is now about 15 rows.
+    - **One row of saved state.** Bus progress, the replay buffer, service state, the last tick, the timetable check time and the usage figures used to be five rows written a minute; they're one (`tickState`), about 5,800 fewer writes a day. The old rows are still read if `tickState` is missing.
+  - The Worker reuses the Durable Object's answers for a minute (30 s for health), so visitors clicking through Analytics don't each wake it.
+  - Every query goes through one helper that adds up the cursor's rows read and written; the day's totals are saved each tick and shown in `/api/health` (degraded from 60% of either limit, down from 95%).
+- **Measured locally (after all of the above):** a wake-up reads about 14 rows, a tick 2 to 16 and writes 3 to 18, and twelve Analytics requests (four endpoints, three periods) read 35 rows in all.
+- **Tests:** 1 more (110).
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

@@ -144,10 +144,13 @@ At this app's size, everything sits inside the free plans:
 |---|---|---|
 | Worker requests | 100,000 a day | One per open page every 10 s, plus weather and radar every few minutes: about 30 pages open all day. Beyond that, requests fail until the next UTC day. |
 | Worker CPU | 10 ms per request | `/api/rt` repackages bytes and never decodes them: about 1 ms |
-| Durable Object rows written | 100,000 a day | About 60,000 (one per departure, plus counts and deletes of old rows) |
-| Durable Object rows read | 5 million a day | About 75,000 each time the object wakes from eviction; nothing per request |
+| Durable Object rows written | 100,000 a day | About 15,000 to 30,000: one per departure, plus the changed day rows and one row of saved state a minute |
+| Durable Object rows read | 5 million a day | About 15 each time the object wakes (most minutes), a few per tick, and a few dozen per Analytics request (answers are reused for a minute): well under 100,000 a day |
+| GitHub Pages bandwidth, from the Worker | (part of the 100 GB a month) | The Worker keeps a compressed copy of the timetable in its database and downloads it again only when a new one is published: about 2.4 MB a day |
 | Pages bandwidth | 100 GB a month (soft) | About 1 MB per first visit |
 | Actions minutes | Unlimited on public repositories | About 2 minutes a day |
+
+`/api/health` shows the day's rows read and written in its `database` check and `database` field, and turns degraded from 60% of either limit. When a limit is reached, the Durable Object stops answering until midnight UTC (8 PM Eastern in winter, 7 PM in summer): nothing is recorded and the Analytics tabs fail to load. That happened on Oct 28, when every wake-up re-read every stored departure (fixed the same day).
 
 If the site gets popular, the first limit you'll hit is Worker requests. The cheapest fix is a custom domain on Cloudflare: `/api/rt` can then be cached at the edge, so most requests never run the Worker. The other fix is the $5/month Workers plan.
 

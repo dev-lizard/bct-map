@@ -46,6 +46,20 @@ let rt = null; // { at, parts, body, errors }
 let bctBase; // from env: BCT's own address unless .dev.vars overrides it
 let contractBase; // from env: the contracted routes' feeds (a secret), or null
 
+// The Durable Object's answers, kept for a short while in this Worker instance: visitors clicking
+// through Analytics would otherwise each wake it and query its database, which counts against the
+// free plan's daily limits. Keyed by path and query string.
+const RECORDER_TTL_MS = 60_000;
+const recorderCache = new Map(); // key -> { at, value }
+async function fromRecorder(key, fn, ttlMs = RECORDER_TTL_MS) {
+  const hit = recorderCache.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value;
+  const value = await fn();
+  if (recorderCache.size > 200) recorderCache.clear();
+  recorderCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
 async function latestBundle() {
   if (rt && Date.now() - rt.at < RT_TTL_MS) return rt;
   const feeds = await fetchAllFeeds(undefined, { base: bctBase, contractBase });
@@ -97,7 +111,8 @@ export default {
   async fetch(request, env) {
     bctBase = env.BCT_BASE || undefined;
     contractBase = env.CONTRACT_FEED_BASE || null;
-    const { pathname, searchParams } = new URL(request.url);
+    const { pathname, search, searchParams } = new URL(request.url);
+    const key = pathname + search;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (request.method !== 'GET' && request.method !== 'HEAD') return json({ error: 'Method not allowed' }, 405);
 
@@ -120,11 +135,11 @@ export default {
       if (pathname === '/api/storms') return json(await (searchParams.get('basin') === 'all' ? getAllStorms() : getStorms()));
       if (pathname === '/api/reliability') {
         const days = intParam(searchParams.get('days'), 7, 1, 30);
-        return json(await recorder(env).summary({ days, routeId: searchParams.get('route') }));
+        return json(await fromRecorder(key, () => recorder(env).summary({ days, routeId: searchParams.get('route') })));
       }
       if (pathname === '/api/analytics') {
         const days = intParam(searchParams.get('days'), 7, 1, 30);
-        const { hourCounts, ...rest } = await recorder(env).analytics({ days });
+        const { hourCounts, ...rest } = await fromRecorder(key, () => recorder(env).analytics({ days }));
         let weather;
         try {
           weather = weatherImpact(hourCounts, weatherByHour(await getWeatherHistory()));
@@ -135,7 +150,7 @@ export default {
       }
       if (pathname === '/api/segments') {
         const days = intParam(searchParams.get('days'), 7, 1, 30);
-        const { hourRows, ...rest } = await recorder(env).segments({ days });
+        const { hourRows, ...rest } = await fromRecorder(key, () => recorder(env).segments({ days }));
         let weather;
         try {
           weather = runningTimeByWeather(hourRows, weatherByHour(await getWeatherHistory()), WEATHER_CLASSES);
@@ -144,13 +159,13 @@ export default {
         }
         return json({ ...rest, weather });
       }
-      if (pathname === '/api/service') return json(await recorder(env).service({ days: intParam(searchParams.get('days'), 7, 1, 30) }));
+      if (pathname === '/api/service') return json(await fromRecorder(key, () => recorder(env).service({ days: intParam(searchParams.get('days'), 7, 1, 30) })));
       if (pathname === '/api/bunching-track') {
-        const track = await recorder(env).track(searchParams.get('key') ?? '');
+        const track = await fromRecorder(key, () => recorder(env).track(searchParams.get('key') ?? ''));
         return track ? json(track) : json({ error: 'No track for this event' }, 404);
       }
       if (pathname === '/api/health') {
-        const report = await recorder(env).health();
+        const report = await fromRecorder(key, () => recorder(env).health(), 30_000);
         return json(report, report.status === 'down' ? 503 : 200);
       }
       if (pathname === '/') return json({ name: 'Broward Transit 3D API', endpoints: ['/api/rt', '/api/weather', '/api/radar', '/api/weather-alerts', '/api/storms', '/api/reliability', '/api/analytics', '/api/segments', '/api/bunching-track', '/api/service', '/api/health'] });

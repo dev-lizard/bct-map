@@ -8,12 +8,18 @@ const FEED_STALE_S = 2 * 60; // no fresh vehicle positions for this long: degrad
 const FEED_DOWN_S = 10 * 60; // ...for this long: down
 const TIMETABLE_WARN_DAYS = 7; // the static timetable ends within this many days: degraded
 const BUILD_STALE_S = 36 * 3600; // the nightly rebuild hasn't succeeded for this long: degraded
+// Share of a daily database limit used: degraded from here, down from the next (the Worker's
+// recording and API stop at 100% until midnight UTC).
+const DB_USAGE_WARN = 0.6;
+const DB_USAGE_DOWN = 0.95;
 
 // nowS: unix seconds. lastRefreshS: when the last feed refresh succeeded. vehicleFeedS: the vehicle
 // feed's own header timestamp. timetableEnd: last service date in the static data (YYYYMMDD).
 // today: today's date in Broward (YYYYMMDD). lastBuild: { ok, at, error } for the last nightly
 // rebuild, or null if none has run in this process. builtAt: when the static data in use was built.
-export function healthReport({ nowS, lastRefreshS, vehicleFeedS, feedErrors = [], timetableEnd, today, daysLeft, lastBuild, builtAtS }) {
+// dbUsage: the Worker's database rows today against the free plan's daily limits ({ read, written,
+// readLimit, writtenLimit }), or null (the Node server has no such limit).
+export function healthReport({ nowS, lastRefreshS, vehicleFeedS, feedErrors = [], timetableEnd, today, daysLeft, lastBuild, builtAtS, dbUsage = null }) {
   const checks = [];
   const add = (name, level, detail) => checks.push({ name, level, detail });
 
@@ -36,6 +42,13 @@ export function healthReport({ nowS, lastRefreshS, vehicleFeedS, feedErrors = []
   if (lastBuild && !lastBuild.ok) add('nightly-build', 'degraded', `Last rebuild failed: ${lastBuild.error}`);
   else if (builtAtS != null && nowS - builtAtS > BUILD_STALE_S) add('nightly-build', 'degraded', `Static data is ${Math.round((nowS - builtAtS) / 3600)} h old`);
   else if (builtAtS != null) add('nightly-build', 'ok', `Static data built ${Math.round((nowS - builtAtS) / 3600)} h ago`);
+
+  if (dbUsage) {
+    const share = Math.max(dbUsage.read / dbUsage.readLimit, dbUsage.written / dbUsage.writtenLimit);
+    const pct = (n, of) => `${Math.round((1000 * n) / of) / 10}%`;
+    add('database', share >= DB_USAGE_DOWN ? 'down' : share >= DB_USAGE_WARN ? 'degraded' : 'ok',
+      `Today (UTC): ${dbUsage.read.toLocaleString('en-US')} rows read (${pct(dbUsage.read, dbUsage.readLimit)} of the free plan), ${dbUsage.written.toLocaleString('en-US')} written (${pct(dbUsage.written, dbUsage.writtenLimit)})`);
+  }
 
   const status = checks.some(c => c.level === 'down') ? 'down' : checks.some(c => c.level === 'degraded') ? 'degraded' : 'ok';
   return { status, checks };
