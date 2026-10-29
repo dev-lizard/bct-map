@@ -5,6 +5,7 @@
 //   GET /api/radar         time and tile URL of the latest rain radar
 //   GET /api/weather-alerts  active National Weather Service alerts for Broward
 //   GET /api/storms        active Atlantic storms' forecast cones (?basin=all for every basin)
+// Analytics endpoints take ?days=N (1-30, default 7) or ?from=YYYYMMDD&to=YYYYMMDD (server/range.mjs).
 //   GET /api/reliability   on-time performance by route, or by hour (?route=ID&days=7)
 //   GET /api/analytics     bunching, cancellations and adherence by weather (?days=7)
 //   GET /api/segments      measured bus running times between stops (?days=7)
@@ -24,6 +25,7 @@ import {
 } from '../server/extras.mjs';
 import { WEATHER_CLASSES, weatherByHour, weatherImpact } from '../server/analytics.mjs';
 import { runningTimeByWeather } from '../server/segments.mjs';
+import { rangeParams } from '../server/range.mjs';
 
 export { Recorder } from './recorder.js';
 
@@ -102,11 +104,6 @@ const getWeatherHistory = memo(loadWeatherHistory, WEATHER_HISTORY_TTL_MS);
 
 const recorder = env => env.RECORDER.get(env.RECORDER.idFromName('bct'));
 
-function intParam(value, fallback, min, max) {
-  const n = Number.parseInt(value ?? '', 10);
-  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
-}
-
 export default {
   async fetch(request, env) {
     bctBase = env.BCT_BASE || undefined;
@@ -134,12 +131,10 @@ export default {
       if (pathname === '/api/weather-alerts') return json(await getWeatherAlerts());
       if (pathname === '/api/storms') return json(await (searchParams.get('basin') === 'all' ? getAllStorms() : getStorms()));
       if (pathname === '/api/reliability') {
-        const days = intParam(searchParams.get('days'), 7, 1, 30);
-        return json(await fromRecorder(key, () => recorder(env).summary({ days, routeId: searchParams.get('route') })));
+        return json(await fromRecorder(key, () => recorder(env).summary({ ...rangeParams(searchParams), routeId: searchParams.get('route') })));
       }
       if (pathname === '/api/analytics') {
-        const days = intParam(searchParams.get('days'), 7, 1, 30);
-        const { hourCounts, ...rest } = await fromRecorder(key, () => recorder(env).analytics({ days }));
+        const { hourCounts, ...rest } = await fromRecorder(key, () => recorder(env).analytics(rangeParams(searchParams)));
         let weather;
         try {
           weather = weatherImpact(hourCounts, weatherByHour(await getWeatherHistory()));
@@ -149,8 +144,7 @@ export default {
         return json({ ...rest, weather });
       }
       if (pathname === '/api/segments') {
-        const days = intParam(searchParams.get('days'), 7, 1, 30);
-        const { hourRows, ...rest } = await fromRecorder(key, () => recorder(env).segments({ days }));
+        const { hourRows, ...rest } = await fromRecorder(key, () => recorder(env).segments(rangeParams(searchParams)));
         let weather;
         try {
           weather = runningTimeByWeather(hourRows, weatherByHour(await getWeatherHistory()), WEATHER_CLASSES);
@@ -159,7 +153,7 @@ export default {
         }
         return json({ ...rest, weather });
       }
-      if (pathname === '/api/service') return json(await fromRecorder(key, () => recorder(env).service({ days: intParam(searchParams.get('days'), 7, 1, 30) })));
+      if (pathname === '/api/service') return json(await fromRecorder(key, () => recorder(env).service(rangeParams(searchParams))));
       if (pathname === '/api/bunching-track') {
         const track = await fromRecorder(key, () => recorder(env).track(searchParams.get('key') ?? ''));
         return track ? json(track) : json({ error: 'No track for this event' }, 404);

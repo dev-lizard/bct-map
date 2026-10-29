@@ -9,6 +9,7 @@
 // just passed), so no map geometry is needed.
 import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
 import { addDelay, emptyCount, ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
+import { dateRange } from './range.mjs';
 
 export const BUNCHED_MAX_S = 180;
 export const BUNCHED_SHARE = 0.25;
@@ -97,7 +98,6 @@ export function newEvents(events, keyOf, seen) {
 }
 export const bunchKey = e => `${e.leader}|${e.follower}`;
 
-const inWindow = (date, days, today) => date >= addDays(today, -(days - 1));
 const countBy = (rows, key) => {
   const counts = new Map();
   for (const r of rows) counts.set(key(r), (counts.get(key(r)) ?? 0) + 1);
@@ -105,9 +105,10 @@ const countBy = (rows, key) => {
 };
 
 // events: every recorded bunching event (any order). -> totals, by route, by hour, by date, and the latest.
-export function summarizeBunching(events, { days, timezone, nowS = Date.now() / 1000 }) {
-  const today = ymdInZone(new Date(nowS * 1000), timezone);
-  const rows = events.filter(e => inWindow(e.date, days, today));
+// The window is the last `days` service days, or from..to (see range.mjs).
+export function summarizeBunching(events, { days, from = null, to = null, timezone, nowS = Date.now() / 1000 }) {
+  const range = dateRange({ days, from, to, timezone, nowS });
+  const rows = events.filter(e => e.date >= range.from && e.date <= range.to);
   const hourFormat = new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', hourCycle: 'h23' });
   return {
     total: rows.length,

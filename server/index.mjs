@@ -3,6 +3,7 @@
 // It polls BCT's GTFS-RT feeds on a timer (never per request), rebuilds the static timetable every
 // night, logs on-time performance, and serves
 //   GET /api/rt                            BCT's three live feeds as one protobuf bundle (web/gtfs-rt.js)
+// Analytics endpoints take ?days=N (1-30, default 7) or ?from=YYYYMMDD&to=YYYYMMDD (server/range.mjs).
 //   GET /api/reliability                   on-time performance by route, or by hour (?route=ID&days=7)
 //   GET /api/analytics                     bunching, cancellations and adherence by weather (?days=7)
 //   GET /api/segments                      measured bus running times between stops (?days=7)
@@ -38,6 +39,7 @@ import { ReliabilityLog } from './reliability.mjs';
 import { runningTimeByWeather, SegmentLog } from './segments.mjs';
 import { TrackLog, trackKey } from './tracks.mjs';
 import { findHubs, ServiceLog } from './service.mjs';
+import { dateRange, rangeParams } from './range.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const WEB_DIR = path.join(ROOT, 'web');
@@ -364,12 +366,6 @@ async function serveFile(req, res, baseDir, urlPath, { immutable = false } = {})
   }
 }
 
-// Integer query parameter, falling back to `fallback` and clamped to [min, max].
-function intParam(value, fallback, min, max) {
-  const n = Number.parseInt(value ?? '', 10);
-  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
-}
-
 // ---- Routes ----------------------------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
@@ -391,28 +387,30 @@ const server = http.createServer(async (req, res) => {
     return sendJson(req, res, report.status === 'down' ? 503 : 200, report);
   }
   if (pathname === '/api/analytics') {
-    const days = intParam(searchParams.get('days'), 7, 1, 30);
-    const since = Date.now() / 1000 - days * 86400;
+    const period = rangeParams(searchParams);
+    const range = dateRange({ ...period, timezone });
+    const since = serviceDayStart(range.from, timezone);
+    const until = serviceDayStart(addDays(range.to, 1), timezone);
     let weather;
     try {
-      weather = weatherImpact(hourCountsFromSamples(reliability.samples.filter(s => s[0] >= since), timezone), weatherByHour(await getWeatherHistory()));
+      weather = weatherImpact(hourCountsFromSamples(reliability.samples.filter(s => s[0] >= since && s[0] < until), timezone), weatherByHour(await getWeatherHistory()));
     } catch (err) {
       weather = { error: `Weather history unavailable: ${err.message}` };
     }
-    const { bunching } = analytics.summary({ days });
+    const { bunching } = analytics.summary(period);
     bunching.recent = bunching.recent.map(e => ({ ...e, track: tracks.status(trackKey(e)) }));
-    return sendJson(req, res, 200, { windowDays: days, collectingSince: Math.floor(analyticsSince), bunching, cancellations: cancellations.summary({ days }), weather });
+    return sendJson(req, res, 200, { windowDays: range.days, from: range.from, to: range.to, collectingSince: Math.floor(analyticsSince), bunching, cancellations: cancellations.summary(period), weather });
   }
   if (pathname === '/api/service') {
-    const days = intParam(searchParams.get('days'), 7, 1, 30);
-    return sendJson(req, res, 200, service.summary({ days, schedule: staticData.schedule, canceled: cancellations.keys({ days }) }));
+    const period = rangeParams(searchParams);
+    return sendJson(req, res, 200, service.summary({ ...period, schedule: staticData.schedule, canceled: cancellations.keys(period) }));
   }
   if (pathname === '/api/bunching-track') {
     const track = tracks.get(searchParams.get('key') ?? '');
     return track ? sendJson(req, res, 200, track) : sendJson(req, res, 404, { error: 'No track for this event' });
   }
   if (pathname === '/api/segments') {
-    const result = segments.query({ days: intParam(searchParams.get('days'), 7, 1, 30) });
+    const result = segments.query(rangeParams(searchParams));
     let weather;
     try {
       weather = runningTimeByWeather(result.hourRows, weatherByHour(await getWeatherHistory()), WEATHER_CLASSES);
@@ -423,7 +421,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(req, res, 200, { ...rest, weather });
   }
   if (pathname === '/api/reliability') {
-    const summary = reliability.summary({ days: intParam(searchParams.get('days'), 7, 1, 30), routeId: searchParams.get('route') });
+    const summary = reliability.summary({ ...rangeParams(searchParams), routeId: searchParams.get('route') });
     return sendJson(req, res, 200, summary);
   }
   const extras = {

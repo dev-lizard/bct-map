@@ -12,6 +12,7 @@
 // of runs and the sums of measured and timetabled seconds; and network-wide per hour, for the weather
 // comparison. A day is one JSON value, so the Durable Object stores it in one row.
 import { ymdInZone } from '../web/gtfs-util.js';
+import { dateRange } from './range.mjs';
 
 export const PERIODS = [
   { key: 'night', label: 'Night', from: 0, to: 6 },
@@ -185,16 +186,15 @@ export class SegmentLog {
 
   // ---- Queries ---------------------------------------------------------------------------------
 
-  // The last `days` calendar days (today included).
+  // The last `days` calendar days (today included), or from..to (see range.mjs).
   // -> { periods, segments: [[from, to, ...[runs, runSeconds, timetabledSeconds] per period]],
   //      hourRows: [{ date, hour, n, run, sched }] }
-  query({ days = 7, nowS = Date.now() / 1000 } = {}) {
-    const today = ymdInZone(new Date(nowS * 1000), this.timezone);
-    const from = ymdInZone(new Date((nowS - (days - 1) * 86400) * 1000), this.timezone);
+  query({ days = 7, from = null, to = null, nowS = Date.now() / 1000 } = {}) {
+    const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
     const totals = new Map();
     const hourRows = [];
     for (const [date, day] of this.#days) {
-      if (date < from || date > today) continue;
+      if (date < range.from || date > range.to) continue;
       for (const [key, t] of day.seg) {
         const sum = totals.get(key) ?? totals.set(key, new Array(PERIODS.length * 3).fill(0)).get(key);
         for (let i = 0; i < sum.length; i++) sum[i] += t[i];
@@ -202,7 +202,7 @@ export class SegmentLog {
       day.hours.forEach(([n, run, sched], hour) => n && hourRows.push({ date, hour, n, run, sched }));
     }
     const segments = [...totals].map(([key, t]) => [...key.split('>'), ...t]);
-    return { days, periods: PERIODS.map(({ key, label, from: f, to }) => ({ key, label, from: f, to })), segments, hourRows };
+    return { days: range.days, periods: PERIODS.map(({ key, label, from: f, to }) => ({ key, label, from: f, to })), segments, hourRows };
   }
 }
 

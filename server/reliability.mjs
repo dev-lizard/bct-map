@@ -7,7 +7,8 @@
 // restarts.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { serviceDayStart } from '../web/gtfs-util.js';
+import { addDays, serviceDayStart } from '../web/gtfs-util.js';
+import { dateRange } from './range.mjs';
 import { addDelay, emptyCount, summarize, timepointDepartures } from './ontime.mjs';
 
 export { ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
@@ -79,11 +80,14 @@ export class ReliabilityLog {
     return this.#writing;
   }
 
-  // On-time stats over the last `days`: overall and per route, or for one route overall and by hour.
-  summary({ days = 7, routeId = null, nowS = Date.now() / 1000 } = {}) {
-    const since = nowS - days * 86400;
-    const counts = this.samples.filter(s => s[0] >= since).map(([, id, delay, hour]) => ({ routeId: id, hour, ...addDelay(emptyCount(), delay) }));
-    return summarize(counts, { days, routeId, collectingSince: this.samples[0]?.[0] ?? null });
+  // On-time stats for the last `days` days or from..to (see range.mjs): overall and per route, or
+  // for one route overall and by hour.
+  summary({ days = 7, from = null, to = null, routeId = null, nowS = Date.now() / 1000 } = {}) {
+    const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
+    const since = serviceDayStart(range.from, this.timezone);
+    const until = serviceDayStart(addDays(range.to, 1), this.timezone);
+    const counts = this.samples.filter(s => s[0] >= since && s[0] < until).map(([, id, delay, hour]) => ({ routeId: id, hour, ...addDelay(emptyCount(), delay) }));
+    return summarize(counts, { days: range.days, routeId, collectingSince: this.samples[0]?.[0] ?? null });
   }
 
   #seenFor(date) {

@@ -36,6 +36,7 @@ import { healthReport } from '../server/health.mjs';
 import { SegmentLog } from '../server/segments.mjs';
 import { TrackLog, trackKey } from '../server/tracks.mjs';
 import { findHubs, ServiceLog } from '../server/service.mjs';
+import { dateRange } from '../server/range.mjs';
 import { addDelay, emptyCount, summarize, timepointDepartures } from '../server/ontime.mjs';
 
 const TIMEZONE = 'America/New_York';
@@ -162,22 +163,22 @@ export class Recorder extends DurableObject {
     return status;
   }
 
-  // On-time stats for the last `days` service days (today included).
-  async summary({ days = 7, routeId = null } = {}) {
+  // On-time stats for the last `days` service days (today included), or from..to (server/range.mjs).
+  async summary({ days = 7, from = null, to = null, routeId = null } = {}) {
     this.#load();
-    const from = addDays(ymdInZone(new Date(), TIMEZONE), -(days - 1));
-    return summarize(this.#ontimeCounts(from), { days, routeId, collectingSince: this.#get('since') });
+    const range = dateRange({ days, from, to, timezone: TIMEZONE });
+    return summarize(this.#ontimeCounts(range.from, range.to), { days: range.days, routeId, collectingSince: this.#get('since') });
   }
 
   // Bunching and cancellations for the last `days` service days, plus hourly on-time counts by
   // calendar date for the Worker to set against the weather.
-  async analytics({ days = 7 } = {}) {
+  async analytics({ days = 7, from = null, to = null } = {}) {
     this.#load();
-    const opts = { days, timezone: TIMEZONE };
-    const from = addDays(ymdInZone(new Date(), TIMEZONE), -(days - 1));
-    this.#ensureDays(from);
+    const range = dateRange({ days, from, to, timezone: TIMEZONE });
+    const opts = { days, from: range.from, to: range.to, timezone: TIMEZONE };
+    this.#ensureDays(range.from);
     const hours = new Map();
-    for (const c of this.#ontimeCounts(from)) {
+    for (const c of this.#ontimeCounts(range.from, range.to)) {
       // Counts are by service date; departures before 4 AM belong to the previous day's service.
       const date = c.hour < 4 ? addDays(c.date, 1) : c.date;
       const key = `${date}|${c.hour}`;
@@ -189,28 +190,33 @@ export class Recorder extends DurableObject {
       h.sumDelay += c.sumDelay;
     }
     return {
-      windowDays: days,
+      windowDays: range.days,
+      from: range.from,
+      to: range.to,
       collectingSince: this.#get('analyticsSince'),
-      bunching: (b => ({ ...b, recent: b.recent.map(e => ({ ...e, track: this.#tracks.status(trackKey(e)) })) }))(summarizeBunching(this.#bunchingSince(from), opts)),
-      cancellations: this.#cancellations.summary({ days }),
+      bunching: (b => ({ ...b, recent: b.recent.map(e => ({ ...e, track: this.#tracks.status(trackKey(e)) })) }))(summarizeBunching(this.#bunchingSince(range.from, range.to), opts)),
+      cancellations: this.#cancellations.summary(opts),
       hourCounts: [...hours.values()],
     };
   }
 
   // Measured running times between stops for the last `days` days, with hourly network totals for
   // the Worker to set against the weather.
-  async segments({ days = 7 } = {}) {
+  async segments({ days = 7, from = null, to = null } = {}) {
     this.#load();
-    this.#ensureDays(addDays(ymdInZone(new Date(), TIMEZONE), -days));
-    return this.#segments.query({ days });
+    const range = dateRange({ days, from, to, timezone: TIMEZONE });
+    this.#ensureDays(addDays(range.from, -1));
+    return this.#segments.query({ from: range.from, to: range.to });
   }
 
   // Service delivered, prediction accuracy, headways and schedule fit for the last `days` days.
-  async service({ days = 7 } = {}) {
+  async service({ days = 7, from = null, to = null } = {}) {
     this.#load();
-    this.#ensureDays(addDays(ymdInZone(new Date(), TIMEZONE), -days)); // the day before too, for trips past midnight
+    const range = dateRange({ days, from, to, timezone: TIMEZONE });
+    this.#ensureDays(addDays(range.from, -1)); // the day before too, for trips past midnight
     await this.#ensureSchedule();
-    return this.#service.summary({ days, schedule: this.#schedule, canceled: this.#cancellations.keys({ days }) });
+    const period = { from: range.from, to: range.to };
+    return this.#service.summary({ ...period, schedule: this.#schedule, canceled: this.#cancellations.keys(period) });
   }
 
   // Both buses' GPS tracks around one bunching event, or null.
@@ -288,10 +294,10 @@ export class Recorder extends DurableObject {
     return this.#ontime.get(date);
   }
 
-  // On-time counts for service dates from `from` on, as { date, routeId, hour, n, early, late, sumDelay }.
-  #ontimeCounts(from) {
+  // On-time counts for service dates from..to, as { date, routeId, hour, n, early, late, sumDelay }.
+  #ontimeCounts(from, to) {
     const out = [];
-    for (const { date, data } of this.#exec('SELECT date, data FROM ontime_days WHERE date >= ?', from).rows) {
+    for (const { date, data } of this.#exec('SELECT date, data FROM ontime_days WHERE date >= ? AND date <= ?', from, to).rows) {
       // Today's may have changes not saved yet.
       const day = this.#ontime.get(date) ?? JSON.parse(data);
       for (const [key, [n, early, late, sumDelay]] of Object.entries(day)) {
@@ -317,9 +323,9 @@ export class Recorder extends DurableObject {
     return { bunches: bunches.length };
   }
 
-  // Bunching events for service dates from `from` on.
-  #bunchingSince(from) {
-    return this.#exec('SELECT * FROM bunching WHERE date >= ?', from).rows.map(r => ({
+  // Bunching events for service dates from..to.
+  #bunchingSince(from, to) {
+    return this.#exec('SELECT * FROM bunching WHERE date >= ? AND date <= ?', from, to).rows.map(r => ({
       date: r.date, leader: r.leader, follower: r.follower, routeId: r.route, direction: r.direction, stopId: r.stop, at: r.at, actualS: r.actual, scheduledS: r.scheduled,
     }));
   }

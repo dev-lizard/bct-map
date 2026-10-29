@@ -5,7 +5,7 @@
 // that context before it means a missed trip.
 //
 // Shared by the Node server and the Worker's Durable Object. Each service day is one JSON value.
-import { addDays, ymdInZone } from '../web/gtfs-util.js';
+import { dateRange } from './range.mjs';
 
 const MAX_ALERTS = 5;
 const MAX_RECENT = 300;
@@ -138,19 +138,20 @@ export class CancellationLog {
     return dropped;
   }
 
-  // "date|trip id" of every trip marked canceled in the last `days` service days.
-  keys({ days = 7, nowS = Date.now() / 1000 } = {}) {
-    const from = addDays(ymdInZone(new Date(nowS * 1000), this.timezone), -(days - 1));
+  // "date|trip id" of every trip marked canceled in the last `days` service days, or from..to.
+  keys({ days = 7, from = null, to = null, nowS = Date.now() / 1000 } = {}) {
+    const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
     const out = new Set();
-    for (const [date, day] of this.#days) if (date >= from) for (const id of day.keys()) out.add(`${date}|${id}`);
+    for (const [date, day] of this.#days) if (date >= range.from && date <= range.to) for (const id of day.keys()) out.add(`${date}|${id}`);
     return out;
   }
 
-  // The last `days` service days: totals, by route, by date, and every record (newest first).
-  summary({ days = 7, nowS = Date.now() / 1000 } = {}) {
-    const from = addDays(ymdInZone(new Date(nowS * 1000), this.timezone), -(days - 1));
+  // The last `days` service days, or from..to: totals, by route, by date, and every record (newest first).
+  summary({ days = 7, from = null, to = null, nowS = Date.now() / 1000 } = {}) {
+    const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
+    const inRange = date => date >= range.from && date <= range.to;
     const rows = [];
-    for (const [date, day] of this.#days) if (date >= from) for (const r of day.values()) rows.push({ date, ...r });
+    for (const [date, day] of this.#days) if (inRange(date)) for (const r of day.values()) rows.push({ date, ...r });
     rows.sort((a, b) => b.firstSeenAt - a.firstSeenAt);
     const byRoute = new Map();
     for (const r of rows) byRoute.set(r.routeId, (byRoute.get(r.routeId) ?? 0) + 1);
@@ -159,7 +160,7 @@ export class CancellationLog {
       ranAnyway: rows.filter(r => r.stopsPassed > 0).length,
       restored: rows.filter(r => r.restoredAt != null).length,
       byRoute: [...byRoute].map(([routeId, trips]) => ({ routeId, trips })).sort((a, b) => b.trips - a.trips),
-      byDate: Object.fromEntries([...this.#days].filter(([date]) => date >= from).map(([date, day]) => [date, day.size])),
+      byDate: Object.fromEntries([...this.#days].filter(([date]) => inRange(date)).map(([date, day]) => [date, day.size])),
       recent: rows.slice(0, MAX_RECENT),
     };
   }

@@ -219,6 +219,8 @@ table.m tr.hl td { background: var(--m-hover); }
 .seg span { padding: 5px; border-radius: 6px; }
 .seg span.on { background: var(--m-bg); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.15); }
 .select { border: 1px solid var(--m-rule); border-radius: 8px; padding: 7px 10px; font-size: 13px; display: flex; justify-content: space-between; }
+.range-mock { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 8px; }
+.range-mock .m-note { font-size: 11px; }
 .with-n { display: flex; align-items: center; gap: 8px; }
 .with-n > :not(.n) { flex: 1; min-width: 0; }
 .quad { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
@@ -256,7 +258,7 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Oct 29, 2026</span>
+    <span class="updated">Matches the app as of Oct 29, 2026 (custom dates added)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -286,19 +288,22 @@ table.m tr.hl td { background: var(--m-hover); }
       <figure class="figure">
         <div class="mock">
           <div class="m-head"><h4>Analytics</h4></div>
-          <div class="with-n"><span class="n">1</span><div class="seg"><span>Today</span><span class="on">7 days</span><span>30 days</span></div></div>
-          <div class="with-n"><span class="n">2</span><div class="select"><span>All routes</span><span>▾</span></div></div>
-          <div class="with-n"><span class="n">3</span><div class="pills"><span class="on">Service</span><span>On time</span><span>Predictions</span><span>Headways</span><span>Transfers</span><span>Schedule</span><span>Speeds</span><span>Bunching</span><span>Weather</span><span>Trends</span><span>Shelters</span><span>Feed</span></div></div>
+          <div class="with-n"><span class="n">1</span><div class="row-flex" style="flex:1"><div class="seg" style="flex:1;grid-template-columns:repeat(4,1fr)"><span>Today</span><span>7 days</span><span>30 days</span><span class="on">Custom</span></div><span class="m-btn" title="Help">?</span></div><span class="n">5</span></div>
+          <div class="with-n"><span class="n">2</span><div class="range-mock"><span class="m-note">First day</span><span class="m-note">Last day</span><span class="select">10/27/2026</span><span class="select">10/28/2026</span></div></div>
+          <div class="with-n"><span class="n">3</span><div class="select"><span>All routes</span><span>▾</span></div></div>
+          <div class="with-n"><span class="n">4</span><div class="pills"><span class="on">Service</span><span>On time</span><span>Predictions</span><span>Headways</span><span>Transfers</span><span>Schedule</span><span>Speeds</span><span>Bunching</span><span>Weather</span><span>Trends</span><span>Shelters</span><span>Feed</span></div></div>
           <div class="m-note">Recorded from BCT's live feed since 2:40 PM Fri, Oct 23.</div>
-          <div class="m-head"><h4>Service delivered</h4><span class="with-n" style="flex:none"><span class="m-btn">CSV</span><span class="n">4</span></span></div>
+          <div class="m-head"><h4>Service delivered</h4><span class="with-n" style="flex:none"><span class="m-btn">CSV</span><span class="n">6</span></span></div>
         </div>
       </figure>
       <div class="words">
         <ol>
-          <li><span class="n">1</span><div><strong>Period.</strong> Today, the last 7 days, or the last 30. Every tab uses it. Longer periods give steadier numbers.</div></li>
-          <li><span class="n">2</span><div><strong>Route.</strong> Show all routes, or narrow every tab to one. Clicking a route badge or a route's row anywhere in the panel sets this too.</div></li>
-          <li><span class="n">3</span><div><strong>Tabs.</strong> One per kind of analysis. Each has its own chapter below.</div></li>
-          <li><span class="n">4</span><div><strong>CSV.</strong> Downloads that tab's numbers as a spreadsheet file.</div></li>
+          <li><span class="n">1</span><div><strong>Period.</strong> Today, the last 7 days, the last 30, or <strong>Custom</strong>. Every tab uses it. Longer periods give steadier numbers.</div></li>
+          <li><span class="n">2</span><div><strong>Custom dates.</strong> With Custom picked, choose a first and last day, both within the last 30 days (how long recordings are kept). Pick the same day twice for a single day. Every tab reloads for that range, and labels read "from Tue, Oct 27 to Wed, Oct 28".</div></li>
+          <li><span class="n">3</span><div><strong>Route.</strong> Show all routes, or narrow every tab to one. Clicking a route badge or a route's row anywhere in the panel sets this too.</div></li>
+          <li><span class="n">4</span><div><strong>Tabs.</strong> One per kind of analysis. Each has its own chapter below.</div></li>
+          <li><span class="n">5</span><div><strong>Help (?).</strong> Opens this guide, at the chapter for the tab you're on.</div></li>
+          <li><span class="n">6</span><div><strong>CSV.</strong> Downloads that tab's numbers as a spreadsheet file. With Custom dates, the file name says which days.</div></li>
         </ol>
         <p class="callout">Tables sort by any column (click its heading; click again to flip the order). Clicking a row opens what it describes: a route, a stop on the map, or a trip's timetable. Long lists show a "Show all" link.</p>
         <p class="muted">The note under the tabs says when recording started. Numbers with a <strong>*</strong> are based on fewer than 20 samples, so treat them as rough.</p>
@@ -1021,7 +1026,7 @@ table.m tr.hl td { background: var(--m-hover); }
       </figure>
       <div class="words">
         <ol>
-          <li><span class="n">1</span><div><strong>Week on week</strong> (in the 30-day view): the last 7 days against the 7 before for on time, trips ran in full, predictions, transfers, excess wait, bunching and cancellations. <span class="early">Blue</span> is better, <span class="late">orange</span> worse, whichever way "better" points for that measure.</div></li>
+          <li><span class="n">1</span><div><strong>Week on week</strong> (when the period covers 14 days or more): the last 7 days against the 7 before (with Custom dates, the range's last 7 days) for on time, trips ran in full, predictions, transfers, excess wait, bunching and cancellations. <span class="early">Blue</span> is better, <span class="late">orange</span> worse, whichever way "better" points for that measure.</div></li>
           <li><span class="n">2</span><div><strong>Worst days:</strong> the three days with the lowest on-time, with that day's rain, cancellations and bunching beside them. "(high)" marks a count well above the period's usual, a likely cause.</div></li>
           <li><span class="n">3</span><div><strong>By day:</strong> every measure in one sortable table. Sort by On time to find the worst days, or by Rain h to see the wet ones.</div></li>
           <li><span class="n">4</span><div><strong>By day of the week</strong> (once there's more than a week): on-time averaged per weekday, so you can see if Fridays are consistently worse.</div></li>

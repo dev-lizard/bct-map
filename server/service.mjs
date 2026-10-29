@@ -19,6 +19,7 @@
 //     are just the timetable.
 import { addDays, serviceDayStart, servicesOn, ymdInZone } from '../web/gtfs-util.js';
 import { ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
+import { dateRange } from './range.mjs';
 import { PERIODS } from './segments.mjs';
 
 export const LEAD_BUCKETS = [
@@ -380,14 +381,16 @@ export class ServiceLog {
 
   // ---- Summary ---------------------------------------------------------------------------------
 
-  // The last `days` days. schedule: { trips, calendar, exceptions }. canceled: Set of
-  // "date|trip id" BCT marked canceled.
-  summary({ days = 7, schedule, canceled = new Set(), nowS = Date.now() / 1000 }) {
-    const today = ymdInZone(new Date(nowS * 1000), this.timezone);
-    const dates = Array.from({ length: days }, (_, i) => addDays(today, -i)).reverse();
+  // The last `days` days, or from..to (see range.mjs). schedule: { trips, calendar, exceptions }.
+  // canceled: Set of "date|trip id" BCT marked canceled.
+  summary({ days = 7, from = null, to = null, schedule, canceled = new Set(), nowS = Date.now() / 1000 }) {
+    const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
+    const { dates } = range;
     const delivered = this.#delivered(dates, schedule, canceled, nowS);
     return {
-      days,
+      days: range.days,
+      from: range.from,
+      to: range.to,
       buckets: LEAD_BUCKETS,
       predictionWindow: { earlyS: PREDICTION_EARLY_S, lateS: PREDICTION_LATE_S },
       rules: { partialS: PARTIAL_S, lateStartS: LATE_START_S, minTransferS: MIN_TRANSFER_S, maxConnectionWaitS: MAX_CONNECTION_WAIT_S, staleS: STALE_S, gpsGapS: GPS_GAP_S, dropoutRemainingS: DROPOUT_REMAINING_S },

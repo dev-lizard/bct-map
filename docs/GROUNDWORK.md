@@ -521,6 +521,12 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **Upkeep:** `CLAUDE.md` asks every change to a tab, or to a rule behind its numbers, to update the guide in the same piece of work.
 - **Also fixed:** Service's "By day" bars now show in the Today view and for one route (the server keeps per-route day counts, `delivered.byRouteDate`), start at the first day with judged trips, and give dates a wider label column so they no longer run into the bars.
 
+**Phase 20 — custom date ranges in Analytics ✅ (built and checked locally)**
+
+- **Panel:** a fourth period button, Custom, shows a first-day and last-day picker (limited to the last 30 days, which is what the recorders keep). Every tab reloads for that range; labels read "from Tue, Oct 27 to Wed, Oct 28", CSV file names carry the dates, and Trends compares the range's last 7 days with the 7 before when it covers 14 days or more. To fit the narrow panel, Help became a "?" icon and the two dates sit side by side.
+- **Server:** `server/range.mjs` turns `?days=N` or `?from=&to=` into the list of dates; every summary (on time, bunching, cancellations, running times, service) takes it, in both the Node server and the Worker.
+- **Free plan:** a range costs the same database reads as the 30-day view at most (about 100 to 200 rows). Custom ranges get less from the Worker's one-minute answer cache, since each is different, which doesn't matter at those sizes.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

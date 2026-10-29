@@ -58,8 +58,8 @@ export class AnalyticsLog {
     return this.#writing;
   }
 
-  summary({ days = 7, nowS = Date.now() / 1000 } = {}) {
-    return { bunching: summarizeBunching(this.bunching, { days, timezone: this.timezone, nowS }) };
+  summary({ days = 7, from = null, to = null, nowS = Date.now() / 1000 } = {}) {
+    return { bunching: summarizeBunching(this.bunching, { days, from, to, timezone: this.timezone, nowS }) };
   }
 
   #seenFor(type, date) {

@@ -1,4 +1,5 @@
-// The Analytics panel. One period (today, 7 or 30 days) and one route (or all) apply to every tab:
+// The Analytics panel. One period (today, 7 or 30 days, or a range of dates within the last 30) and
+// one route (or all) apply to every tab:
 //   Service      trips delivered, missed without notice, and canceled (/api/service, /api/analytics)
 //   On time      GPS-timed departures at timepoints, by route or by hour (/api/reliability)
 //   Predictions  how close BCT's predicted arrival was, by how far ahead it was made (/api/service)
@@ -21,7 +22,8 @@ import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.
 import { sharePct, verdictLabel } from './panel.js';
 import { slowest, SPEED_BANDS, speedFeatures, speedTable } from './speeds.js';
 
-const PERIODS = [[1, 'Today'], [7, '7 days'], [30, '30 days']];
+const PERIODS = [[1, 'Today'], [7, '7 days'], [30, '30 days'], ['custom', 'Custom']];
+const KEPT_DAYS = 30; // how far back the recorder keeps data (server/range.mjs)
 const TABS = [
   ['service', 'Service'], ['ontime', 'On time'], ['predictions', 'Predictions'], ['headways', 'Headways'],
   ['transfers', 'Transfers'], ['schedule', 'Schedule'], ['speeds', 'Speeds'], ['bunching', 'Bunching'],
@@ -38,10 +40,11 @@ const DIRECTIONS = ['outbound', 'inbound'];
 // amenities, buses (a weekday) }]. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
 // onCanceled(record, related); onBunching(event). settings: for the 12/24-hour clock.
 export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopPairRoutes, shelterStops, onStop, onTrip, onSpeedMap, onCanceled, onBunching, settings }) {
-  let days = 7;
+  let days = 7; // how many days the period covers
+  let custom = null; // { from, to } (YYYYMMDD) when the viewer picked dates, else null for the last `days`
   let routeId = null;
   let tab = 'service';
-  let data = null; // { analytics, segments, service } for `days`
+  let data = null; // { analytics, segments, service } for the period
   let request = 0;
   let speedPeriod = 'all';
   let speedMapOn = false;
@@ -54,11 +57,20 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
   for (const [value, label] of PERIODS) {
     const b = el('button', { type: 'button' }, label);
     b.dataset.days = String(value);
-    b.addEventListener('click', () => {
-      days = value;
-      load();
-    });
+    b.addEventListener('click', () => (value === 'custom' ? setRange(custom ?? lastDays(7)) : setDays(value)));
     periodBar.append(b);
+  }
+  // Custom: two dates within the last KEPT_DAYS days.
+  const fromInput = el('input', { type: 'date', className: 'text-input', id: 'an-from', ariaLabel: 'First day' });
+  const toInput = el('input', { type: 'date', className: 'text-input', id: 'an-to', ariaLabel: 'Last day' });
+  const rangeRow = el('div', { className: 'an-range', hidden: true },
+    el('label', { htmlFor: 'an-from' }, 'First day'), el('label', { htmlFor: 'an-to' }, 'Last day'), fromInput, toInput);
+  for (const input of [fromInput, toInput]) {
+    input.addEventListener('change', () => {
+      const from = fromYmdInput(fromInput.value);
+      const to = fromYmdInput(toInput.value);
+      if (from && to) setRange({ from, to });
+    });
   }
   const routeSelect = el('select', { className: 'text-input', ariaLabel: 'Route' },
     el('option', { value: '' }, 'All routes'),
@@ -75,7 +87,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     tabBar.append(b);
   }
   // Opens the illustrated guide (web/guide.html) at the open tab's chapter, in the app's theme.
-  const helpLink = el('a', { className: 'small-button an-help', target: '_blank', rel: 'noopener', title: 'How to read these numbers (opens the guide)' }, icon('help'), 'Help');
+  const helpLink = el('a', { className: 'small-button an-help', target: '_blank', rel: 'noopener', title: 'Help: how to read these numbers (opens the guide)', ariaLabel: 'Help: how to read these numbers' }, icon('help'));
   const note = el('p', { className: 'panel-note an-note' });
   const content = el('div', { className: 'an-content' });
 
@@ -85,13 +97,43 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     render();
   }
 
+  function setDays(value) {
+    days = value;
+    custom = null;
+    load();
+  }
+
+  // Picks a range of dates, put in order and held inside the days the recorder keeps.
+  function setRange({ from, to }) {
+    const last = today();
+    const first = addDays(last, -(KEPT_DAYS - 1));
+    if (from > to) [from, to] = [to, from];
+    to = to > last ? last : to < first ? first : to;
+    from = from < first ? first : from > to ? to : from;
+    custom = { from, to };
+    days = dayCount(from, to);
+    load();
+  }
+
+  const lastDays = n => ({ from: addDays(today(), -(n - 1)), to: today() });
+  // The period as API query parameters, and as a short tag for file names.
+  const query = () => (custom ? `from=${custom.from}&to=${custom.to}` : `days=${days}`);
+  const slug = () => (custom ? `${custom.from}-${custom.to}` : `${days}d`);
+
   async function load() {
     const ticket = ++request;
-    for (const b of periodBar.children) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days));
+    for (const b of periodBar.children) b.setAttribute('aria-pressed', String(custom ? b.dataset.days === 'custom' : Number(b.dataset.days) === days));
+    rangeRow.hidden = !custom;
+    if (custom) {
+      fromInput.min = toInput.min = toYmdInput(addDays(today(), -(KEPT_DAYS - 1)));
+      fromInput.max = toInput.max = toYmdInput(today());
+      fromInput.value = toYmdInput(custom.from);
+      toInput.value = toYmdInput(custom.to);
+    }
     content.replaceChildren(el('p', { className: 'panel-note' }, 'Loading…'));
     const get = path => getApiJson(path).catch(err => ({ error: err.message }));
     const [analytics, segments, service] = await Promise.all([
-      get(`/api/analytics?days=${days}`), get(`/api/segments?days=${days}`), get(`/api/service?days=${days}`),
+      get(`/api/analytics?${query()}`), get(`/api/segments?${query()}`), get(`/api/service?${query()}`),
     ]);
     if (ticket !== request) return;
     data = { analytics, segments, service };
@@ -116,7 +158,9 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     }
   }
 
-  const periodText = () => (days === 1 ? 'today' : `in the last ${days} days`);
+  const periodText = () => (custom
+    ? (custom.from === custom.to ? `on ${dateLabel(custom.from)}` : `from ${dateLabel(custom.from)} to ${dateLabel(custom.to)}`)
+    : days === 1 ? 'today' : `in the last ${days} days`);
   const routeText = () => (routeId ? `route ${route(routeId).routeShortName}` : 'all routes');
   const failed = (what, err) => [el('p', { className: 'empty' }, `Couldn't load ${what}: ${err}`)];
   const head = (title, csv) => el('div', { className: 'an-head' }, el('h3', {}, title), csv);
@@ -170,7 +214,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       m.notRunEndS >= s.rules.partialS && `last ${Math.round(m.notRunEndS / 60)} min not run`,
     ].filter(Boolean).join(', ');
     return [
-      head('Service delivered', csvButton(`broward-service-delivered-${days}d.csv`, () => [
+      head('Service delivered', csvButton(`broward-service-delivered-${slug()}.csv`, () => [
         ['route', 'scheduled_trips', 'ran_in_full', 'ran_in_part', 'canceled', 'missed_unannounced', 'not_judged', 'ran_in_full_pct'],
         ...d.byRoute.map(r => [route(r.routeId).routeShortName, r.scheduled, r.operated, r.partial ?? 0, r.canceled, r.missed, r.unknown, judgedPct(r)]),
       ], d.byRoute.length)),
@@ -240,7 +284,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       return b;
     });
     return [
-      head(`Canceled trips (${records.length})`, csvButton(`broward-cancellations-${days}d.csv`, () => [
+      head(`Canceled trips (${records.length})`, csvButton(`broward-cancellations-${slug()}.csv`, () => [
         ['service_date', 'route', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened', 'trip_stops', 'pct_of_stops_run'],
         ...records.map(r => {
           const info = tripInfo(r.tripId, r.date);
@@ -259,14 +303,14 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
 
   let onTimeCache = null; // { key, data }
   function renderOnTime() {
-    const key = `${days}|${routeId ?? ''}`;
+    const key = `${query()}|${routeId ?? ''}`;
     if (onTimeCache?.key !== key) {
       const ticket = request;
-      getApiJson(`/api/reliability?days=${days}${routeId ? `&route=${encodeURIComponent(routeId)}` : ''}`)
+      getApiJson(`/api/reliability?${query()}${routeId ? `&route=${encodeURIComponent(routeId)}` : ''}`)
         .then(d => ({ key, data: d }), err => ({ key, data: { error: err.message } }))
         .then(result => {
           onTimeCache = result;
-          if (ticket === request && tab === 'ontime' && `${days}|${routeId ?? ''}` === key) render();
+          if (ticket === request && tab === 'ontime' && `${query()}|${routeId ?? ''}` === key) render();
         });
       return [el('p', { className: 'panel-note' }, 'Loading…')];
     }
@@ -274,7 +318,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     if (d.error) return failed('on-time data', d.error);
     const intro = el('p', { className: 'status' }, `Departures from timepoints, timed from bus GPS: on time is no more than 1 minute early or 5 minutes late. ${d.samples.toLocaleString('en-US')} ${d.samples === 1 ? 'departure' : 'departures'}, ${routeText()}, ${periodText()}.`);
     const total = el('div', { className: 'rel-row rel-total' }, el('strong', {}, routeId ? 'All day' : 'All'), stackedBar(d), el('strong', { className: 'rel-pct' }, pct(d)));
-    const csv = csvButton(`broward-on-time-${routeId ? route(routeId).routeShortName : 'all'}-${days}d.csv`, () => (routeId
+    const csv = csvButton(`broward-on-time-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => (routeId
       ? [['hour', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'mean_delay_s'], ...d.byHour.map(h => [h.hour, h.samples, h.onTimePct, h.earlyPct, h.latePct, h.meanDelayS])]
       : [['route', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'mean_delay_s'], ...d.routes.map(r => [route(r.routeId).routeShortName, r.samples, r.onTimePct, r.earlyPct, r.latePct, r.meanDelayS])]), d.samples);
     if (!d.samples) return [head('On time', csv), intro, el('p', { className: 'empty' }, 'No departures recorded yet.')];
@@ -318,7 +362,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       return { routeId: id, n: all[0], accuracy: accuracy(all), early: all[0] ? Math.round((1000 * all[3]) / all[0]) / 10 : null, mean: all[0] ? Math.round(all[1] / all[0]) : null, near: accuracy(t[2]) };
     });
     return [
-      head('Prediction accuracy', csvButton(`broward-predictions-${routeId ? route(routeId).routeShortName : 'all'}-${days}d.csv`, () => [
+      head('Prediction accuracy', csvButton(`broward-predictions-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => [
         ['how_far_ahead', 'predictions', 'accurate_pct', 'bus_early_pct', 'bus_late_pct', 'mean_miss_s'],
         ...s.buckets.map((info, i) => [info.label, buckets[i][0], accuracy(buckets[i]), buckets[i][0] ? Math.round((1000 * buckets[i][3]) / buckets[i][0]) / 10 : null, buckets[i][0] ? Math.round((1000 * buckets[i][4]) / buckets[i][0]) / 10 : null, buckets[i][0] ? Math.round(buckets[i][1] / buckets[i][0]) : null]),
       ], n)),
@@ -361,7 +405,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       return { ...g, n: w?.n ?? 0, excess: w ? Math.round(w.actual - w.scheduled) : null, actual: w ? Math.round(w.actual) : null, scheduled: w ? Math.round(w.scheduled) : null };
     });
     const intro = el('p', { className: 'status' }, 'On frequent service (timetabled 20 minutes apart or less), riders turn up without checking times. Uneven gaps between buses make their average wait longer than the timetable promises; the extra is "excess wait". Measured at timepoints from GPS.');
-    const csv = csvButton(`broward-headways-${days}d.csv`, () => [
+    const csv = csvButton(`broward-headways-${slug()}.csv`, () => [
       ['route', 'direction', 'stop_id', 'stop', 'headways', 'avg_wait_s', 'timetabled_wait_s', 'excess_wait_s'],
       ...Object.entries(s.headways.byStop).filter(([k]) => !routeId || k.startsWith(`${routeId}|`)).map(([k, v]) => {
         const [r, d, stopId] = k.split('|');
@@ -410,7 +454,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const all = rows.reduce((a, h) => [a[0] + h.n, a[1] + h.madeN], [0, 0]);
     const rules = s.rules;
     const intro = el('p', { className: 'status' }, `At stations served by 3 or more routes: a rider coming in on one route, heading for the next bus the timetable gives them on another (leaving ${rules.minTransferS / 60} to ${rules.maxConnectionWaitS / 60} minutes later). Made: the second bus left at least ${rules.minTransferS / 60} minutes after the first really arrived. Missed, they wait for the bus after.`);
-    const csv = csvButton(`broward-transfers-${days}d.csv`, () => [
+    const csv = csvButton(`broward-transfers-${slug()}.csv`, () => [
       ['hub', 'from_route', 'to_route', 'connections', 'made_pct', 'mean_wait_when_made_s', 'mean_extra_wait_when_missed_s'],
       ...hubs.flatMap(h => Object.entries(byHub[h.id] ?? {}).filter(([pair]) => touches(pair)).map(([pair, v]) => {
         const [from, to] = pair.split('>');
@@ -458,7 +502,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ({ tripId, routeId: r, n, actual: a / n, scheduled: sc / n, over, starts, startDelay: starts ? startSum / starts : null, late }));
     const lateStartMin = s.rules.lateStartS / 60;
     const intro = el('p', { className: 'status' }, `Each trip's running time between the first and last timepoints GPS saw it pass (at least 80% of the trip), against the timetable. Trips always over are scheduled too tight; always well under, too loose. A late start is leaving the first timepoint more than ${lateStartMin} minutes late: that points at layovers and operators, while time lost along the way points at the street.`);
-    const csv = csvButton(`broward-schedule-fit-${days}d.csv`, () => [
+    const csv = csvButton(`broward-schedule-fit-${slug()}.csv`, () => [
       ['route', 'trip_id', 'destination', 'scheduled_start', 'runs', 'mean_running_s', 'timetabled_s', 'difference_s', 'runs_over_by_10pct', 'mean_start_delay_s', 'late_starts'],
       ...trips.filter(t => !routeId || t.routeId === routeId).map(t => {
         const info = tripInfo(t.tripId, today());
@@ -565,7 +609,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const congested = segments.filter(s => s.lostPerDayS > 0).slice(0, shown.congested ?? 10);
     const slow = slowest(segments, shown.slow ?? 10);
     return [
-      head('Bus speeds and congestion', csvButton(`broward-bus-speeds-${speedPeriod}-${days}d.csv`, () => [
+      head('Bus speeds and congestion', csvButton(`broward-bus-speeds-${speedPeriod}-${slug()}.csv`, () => [
         ['from_stop_id', 'from_stop', 'to_stop_id', 'to_stop', 'routes', 'runs', 'distance_m', 'mean_run_s', 'mean_timetabled_s', 'mph', 'best_period_mph', 'extra_s_per_run', 'congestion_s_per_day'],
         ...segments.map(s => [s.from, s.fromName, s.to, s.toName, s.routes.map(r => route(r).routeShortName).join(' '), s.runs, s.distanceM, s.meanRunS, s.meanTimetabledS, s.mph, s.baselineMph, s.extraPerRunS, s.lostPerDayS]),
       ], segments.length)),
@@ -611,7 +655,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       return btn;
     });
     return [
-      head('Bus bunching', csvButton(`broward-bunching-${days}d.csv`, () => [
+      head('Bus bunching', csvButton(`broward-bunching-${slug()}.csv`, () => [
         ['time', 'route', 'direction', 'stop_id', 'stop', 'gap_seconds', 'timetabled_gap_seconds', 'leading_trip', 'following_trip'],
         ...events.map(e => [csvTime(e.at), route(e.routeId).routeShortName, e.direction, e.stopId, stopName(e.stopId), e.actualS, e.scheduledS, e.leader, e.follower]),
       ], events.length)),
@@ -645,7 +689,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
           run?.vsDry && el('span', { className: run.vsDry.indexPts > 0 ? 'late' : 'early' }, `running time ${run.vsDry.indexPts > 0 ? '+' : ''}${run.vsDry.indexPts}% vs dry`)));
     });
     return [
-      head('Weather', csvButton(`broward-weather-${days}d.csv`, () => [
+      head('Weather', csvButton(`broward-weather-${slug()}.csv`, () => [
         ['weather', 'hours', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'mean_delay_seconds', 'on_time_pts_vs_dry_same_hours', 'running_time_pct_vs_dry_same_hours'],
         ...w.classes.map(c => [c.label, c.hours, c.samples, c.onTimePct, c.earlyPct, c.latePct, c.meanDelayS, c.vsDry?.onTimePts, rt.find(x => x.wx === c.wx)?.vsDry?.indexPts]),
       ], 1)),
@@ -683,7 +727,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       };
     }).filter(r => r.departures || r.predictions != null || r.delivered != null || r.bunching || r.canceled);
     const intro = el('p', { className: 'status' }, `Each measure day by day (${routeText()}). In full (trips that ran the whole way), excess wait and transfers are for all routes together. Rain is hours with rain at any of Broward's airport weather stations.`);
-    const csv = csvButton(`broward-trends-${routeId ? route(routeId).routeShortName : 'all'}-${days}d.csv`, () => [
+    const csv = csvButton(`broward-trends-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => [
       ['date', 'departures_timed', 'on_time_pct', 'trips_ran_in_full_pct', 'predictions_accurate_pct', 'excess_wait_s', 'transfers_made_pct', 'bunching_events', 'canceled_trips', 'rain_hours', 'heavy_rain_hours'],
       ...rows.map(r => [r.date, r.departures, r.onTime, r.delivered, r.predictions, r.excess, r.transfers, r.bunching, r.canceled, r.rain, r.heavy]),
     ], rows.length);
@@ -693,8 +737,8 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     // This week against the week before.
     if (days >= 14) parts.push(...weekOnWeek(rows));
     else {
-      const b = el('button', { type: 'button', className: 'link' }, 'See 30 days to compare this week with last');
-      b.addEventListener('click', () => { days = 30; load(); });
+      const b = el('button', { type: 'button', className: 'link' }, custom ? 'Pick 14 days or more, or see 30 days, to compare a week with the one before' : 'See 30 days to compare this week with last');
+      b.addEventListener('click', () => setDays(30));
       parts.push(b);
     }
 
@@ -744,8 +788,9 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
 
   // The last 7 days against the 7 before, for each measure.
   function weekOnWeek(rows) {
-    const last = addDays(today(), -6);
-    const prev = addDays(today(), -13);
+    const end = custom?.to ?? today();
+    const last = addDays(end, -6);
+    const prev = addDays(end, -13);
     const thisWeek = rows.filter(r => r.date >= last);
     const lastWeek = rows.filter(r => r.date >= prev && r.date < last);
     if (!thisWeek.length || !lastWeek.length) return [el('p', { className: 'status' }, 'Week-on-week comparison needs recording from both of the last two weeks.')];
@@ -758,7 +803,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ['On time', 'onTime', 'departures', 1, '%'], ['Trips ran in full', 'delivered', null, 1, '%'], ['Predictions accurate', 'predictions', null, 1, '%'],
       ['Transfers made', 'transfers', null, 1, '%'], ['Excess wait', 'excess', null, -1, 's'], ['Bunching a day', 'bunching', null, -1, ''], ['Canceled a day', 'canceled', null, -1, ''],
     ];
-    return [el('h4', {}, 'Last 7 days against the 7 before'), ...measures.map(([label, key, weight, better, unit]) => {
+    return [el('h4', {}, custom ? 'The range\'s last 7 days against the 7 before' : 'Last 7 days against the 7 before'), ...measures.map(([label, key, weight, better, unit]) => {
       const now = mean(thisWeek, key, weight);
       const before = mean(lastWeek, key, weight);
       if (now == null || before == null) return null;
@@ -810,7 +855,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const t = dayRows.reduce((acc, d) => { for (const k of Object.keys(acc)) acc[k] += d[k] ?? 0; return acc; }, { reports: 0, stale: 0, gaps: 0, dropouts: 0, predictedTrips: 0, timetableOnly: 0 });
     const routeRows = Object.entries(byRoute).map(([id, [gaps, dropouts, checks, timetable]]) => ({ routeId: id, gaps, dropouts, checks, timetablePct: rate(timetable, checks) }));
     const c = data.analytics.cancellations;
-    const csv = csvButton(`broward-feed-quality-${days}d.csv`, () => [
+    const csv = csvButton(`broward-feed-quality-${slug()}.csv`, () => [
       ['scope', 'date_or_route', 'gps_reports', 'stale_reports_pct', 'gps_gaps', 'buses_vanished_mid_trip', 'prediction_checks', 'timetable_only_pct'],
       ...dayRows.map(d => ['day', d.date, d.reports, rate(d.stale, d.reports), d.gaps, d.dropouts, d.predictedTrips, rate(d.timetableOnly, d.predictedTrips)]),
       ...routeRows.map(x => ['route', route(x.routeId).routeShortName, '', '', x.gaps, x.dropouts, x.checks, x.timetablePct]),
@@ -954,7 +999,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
   const hourText = h => (settings.timeFormat === '24h' ? `${String(h).padStart(2, '0')}:00` : hourLabel(h));
 
   return {
-    node: el('div', { className: 'analytics' }, el('div', { className: 'an-controls' }, el('div', { className: 'an-top' }, periodBar, helpLink), routeSelect, tabBar), note, content),
+    node: el('div', { className: 'analytics' }, el('div', { className: 'an-controls' }, el('div', { className: 'an-top' }, periodBar, helpLink), rangeRow, routeSelect, tabBar), note, content),
     sync: load,
     // Opens a tab, optionally for one route (e.g. from elsewhere in the app).
     show(nextTab, nextRoute = routeId) {
@@ -971,6 +1016,10 @@ const excessOf = ([n, a, a2, s, s2] = []) => (n && a && s ? Math.round(a2 / (2 *
 const ymdDate = d => new Date(Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), 17));
 const weekdayIndex = d => (ymdDate(d).getUTCDay() + 6) % 7;
 const dateLabel = d => formatDate(ymdDate(d));
+// YYYYMMDD <-> a date input's YYYY-MM-DD.
+const toYmdInput = d => `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+const fromYmdInput = v => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v.replaceAll('-', '') : null);
+const dayCount = (from, to) => Math.round((ymdDate(to) - ymdDate(from)) / 86_400_000) + 1;
 const sameDay = s => formatDate(new Date(s * 1000)) === formatDate(new Date());
 const minutesText = s => (s < 60 ? `${s} s` : `${Math.round(s / 60)} min`);
 const seconds = s => (Math.abs(s) < 90 ? `${s} s` : `${Math.round((s / 60) * 10) / 10} min`);
