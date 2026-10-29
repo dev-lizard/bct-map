@@ -148,3 +148,10 @@ test('service delivered: a trip GPS saw run only part of the way is partial', ()
   d = run([pass('L', 1, day + 8 * H + 30), pass('L', 2, day + 8 * H + 1250), pass('L', 3, day + 8 * H + 2450)]);
   assert.deepEqual([d.byDate[0].operated, d.byDate[0].partial], [1, 0]); // the whole way: ran in full
 });
+
+test('service delivered: day-by-day counts for each route too', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  recordMorning(log);
+  const { byRouteDate } = log.summary({ days: 1, schedule, nowS: day + 12 * H }).delivered;
+  assert.deepEqual(byRouteDate.R1, [{ date: '20261022', scheduled: 3, operated: 2, partial: 0, canceled: 0, missed: 1, unknown: 0 }]);
+});

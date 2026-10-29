@@ -514,6 +514,13 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **Measured locally (after all of the above):** a wake-up reads about 14 rows, a tick 2 to 16 and writes 3 to 18, and twelve Analytics requests (four endpoints, three periods) read 35 rows in all.
 - **Tests:** 1 more (110).
 
+**Phase 19 — the Analytics guide and Help button ✅ (built and checked locally)**
+
+- **The guide** (`web/guide.html`): every Analytics tab explained in plain words, with a drawn copy of each part of the tab and numbered markers tying the picture to the explanation. It ships with the site and uses the app's font (Overpass), panel colours and status colours, and its day/night theme (from `?theme=`, else the saved setting, else the hour in Broward). It started as a private Claude artifact; the site copy replaced it so everyone can open it.
+- **Help button:** at the top of the Analytics panel, beside the period buttons. It opens the guide in a new tab at the open tab's chapter (`guide.html?theme=night#transfers`).
+- **Upkeep:** `CLAUDE.md` asks every change to a tab, or to a rule behind its numbers, to update the guide in the same piece of work.
+- **Also fixed:** Service's "By day" bars now show in the Today view and for one route (the server keeps per-route day counts, `delivered.byRouteDate`), start at the first day with judged trips, and give dates a wider label column so they no longer run into the bars.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

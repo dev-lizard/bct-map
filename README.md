@@ -33,7 +33,7 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 - **Buses:** drawn in 3D, or as lighter 2D dots with heading arrows (Settings → Buses). "Automatic" switches to 2D if the map runs slowly.
 - **Header:** Broward time and current weather (Open-Meteo). Settings → Rain radar adds the US NEXRAD radar layer.
 - **Buses (rail):** every bus in the feed as a sortable, filterable table: route, bus number, destination, next stop, schedule adherence and report age. Click a row to show the bus; download it as CSV.
-- **Analytics (rail):** one period (today, 7 or 30 days) and one route (or all) apply to every tab; tables sort by any column, rows open the route, stop or trip they describe, and every tab downloads as CSV.
+- **Analytics (rail):** one period (today, 7 or 30 days) and one route (or all) apply to every tab; tables sort by any column, rows open the route, stop or trip they describe, and every tab downloads as CSV. **Help** opens an illustrated guide to every tab (`web/guide.html`), at the open tab's chapter.
   - **Service:** the share of scheduled trips that ran in full, trips that ran only partly (which end wasn't run), trips missed without notice, and canceled trips (each one explorable: when it was due and canceled, the bus and BCT alert, the gap riders faced, whether GPS saw it run anyway, and what share of its stops).
   - **On time:** GPS-timed departures from timepoints (1 minute early to 5 late), by route or by hour.
   - **Predictions:** how close BCT's predicted arrival was, by how far ahead it was made (0–2 up to 20–30 minutes), and how often the bus came early.

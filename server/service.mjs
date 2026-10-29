@@ -439,6 +439,7 @@ export class ServiceLog {
     const covered = this.#coverageIndex(dates);
     const byRoute = new Map();
     const byDate = [];
+    const byRouteDate = {}; // route -> [counts by date], for one route's day-by-day bars
     const missed = [];
     const partial = [];
     for (const date of dates) {
@@ -473,6 +474,10 @@ export class ServiceLog {
         const r = byRoute.get(trip.r) ?? byRoute.set(trip.r, { routeId: trip.r, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 }).get(trip.r);
         r.scheduled++;
         r[status]++;
+        const days = (byRouteDate[trip.r] ??= []);
+        if (days.at(-1)?.date !== date) days.push({ date, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 });
+        days.at(-1).scheduled++;
+        days.at(-1)[status]++;
         if (status === 'missed') missed.push({ date, tripId, routeId: trip.r, start });
         if (part) partial.push({ date, tripId, routeId: trip.r, start, ...part });
       }
@@ -481,7 +486,7 @@ export class ServiceLog {
     missed.sort((a, b) => b.start - a.start);
     partial.sort((a, b) => b.start - a.start);
     // operated: ran in full (or as far as anyone can tell). partial: GPS saw only part of it run.
-    return { byRoute: [...byRoute.values()], byDate, missed: missed.slice(0, MAX_LIST), partial: partial.slice(0, MAX_LIST) };
+    return { byRoute: [...byRoute.values()], byDate, byRouteDate, missed: missed.slice(0, MAX_LIST), partial: partial.slice(0, MAX_LIST) };
   }
 
   #predictions(dates) {

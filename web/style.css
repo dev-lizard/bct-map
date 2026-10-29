@@ -1420,6 +1420,36 @@ button.rel-row:hover {
   margin: 0;
 }
 
+/* The period buttons, with Help beside them. */
+.an-top {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.an-top .segmented {
+  flex: 1;
+  min-width: 0;
+}
+
+.an-help {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--panel-text);
+  text-decoration: none;
+}
+
+.an-help .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.an-help:hover {
+  background: var(--row-hover);
+}
+
 .an-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1508,6 +1538,11 @@ button.rel-row:hover {
 
 .svc-canceled {
   background: #d97706;
+}
+
+/* Service's day bars: a date ("Thu, Oct 29") needs more room than an hour. */
+.rel-row.svc-day {
+  grid-template-columns: 88px minmax(0, 1fr) 52px;
 }
 
 .svc-missed {

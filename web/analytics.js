@@ -17,7 +17,7 @@
 import { getApiJson } from './api.js';
 import { addDays } from './gtfs-util.js';
 import { csvTime, downloadCsv } from './csv.js';
-import { el, formatDate, formatTime, formatWhen, routeBadge } from './dom.js';
+import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 import { sharePct, verdictLabel } from './panel.js';
 import { slowest, SPEED_BANDS, speedFeatures, speedTable } from './speeds.js';
 
@@ -74,6 +74,8 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     });
     tabBar.append(b);
   }
+  // Opens the illustrated guide (web/guide.html) at the open tab's chapter, in the app's theme.
+  const helpLink = el('a', { className: 'small-button an-help', target: '_blank', rel: 'noopener', title: 'How to read these numbers (opens the guide)' }, icon('help'), 'Help');
   const note = el('p', { className: 'panel-note an-note' });
   const content = el('div', { className: 'an-content' });
 
@@ -98,6 +100,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
 
   function render() {
     for (const b of tabBar.children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    helpLink.href = `guide.html?theme=${document.documentElement.dataset.theme ?? 'day'}#${tab}`;
     const since = data?.analytics?.collectingSince;
     note.textContent = since ? `Recorded from BCT's live feed since ${formatTime(since)} ${sameDay(since) ? 'today' : formatDate(new Date(since * 1000))}.` : '';
     if (!data) return;
@@ -157,6 +160,11 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     };
     const missed = mine(d.missed);
     const partial = mine(d.partial);
+    // Day-by-day bars for all routes or the chosen one, from the first day with a judged trip
+    // (days before recording began have nothing to show).
+    const allDays = (routeId ? d.byRouteDate?.[routeId] : d.byDate) ?? [];
+    const firstJudged = allDays.findIndex(x => x.scheduled > x.unknown);
+    const judgedDays = firstJudged < 0 ? [] : allDays.slice(firstJudged);
     const partNote = m => [
       m.notRunStartS >= s.rules.partialS && `first ${Math.round(m.notRunStartS / 60)} min not run`,
       m.notRunEndS >= s.rules.partialS && `last ${Math.round(m.notRunEndS / 60)} min not run`,
@@ -173,9 +181,8 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} in full · ${t.partial} only partly · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
       el('p', { className: 'status' }, `A trip ran if a bus was seen on it, in the vehicle feed or by GPS. Only partly: GPS first saw it ${s.rules.partialS / 60}+ minutes into its timetable, or last saw it ${s.rules.partialS / 60}+ minutes before the end; a bus whose GPS failed looks the same (see Feed). Missed without notice: no bus ever showed and BCT never marked it canceled. Only finished trips count.`),
       serviceLegend(),
-      // Day-by-day counts are kept for all routes together.
-      !routeId && d.byDate.length > 1 && el('h4', {}, 'By day'),
-      !routeId && d.byDate.length > 1 && el('div', { className: 'an-rows' }, ...dayRows(d.byDate)),
+      judgedDays.length > 0 && el('h4', {}, 'By day'),
+      judgedDays.length > 0 && el('div', { className: 'an-rows' }, ...dayRows(judgedDays)),
       !routeId && el('h4', {}, 'By route (worst first)'),
       !routeId && table('service-routes', [
         { key: 'route', label: 'Route', value: r => route(r.routeId).order ?? 999, render: r => routeBadge(route(r.routeId)) },
@@ -214,7 +221,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         bar.append(seg);
       }
       const label = formatDate(new Date(Date.UTC(+d.date.slice(0, 4), +d.date.slice(4, 6) - 1, +d.date.slice(6, 8), 17)));
-      return el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, label), judged ? bar : el('span', { className: 'status' }, 'not judged'), el('span', { className: 'rel-pct' }, judged ? `${Math.round((1000 * d.operated) / judged) / 10}%` : ''));
+      return el('div', { className: 'rel-row svc-day' }, el('span', { className: 'rel-hour' }, label), judged ? bar : el('span', { className: 'status' }, 'not judged'), el('span', { className: 'rel-pct' }, judged ? `${Math.round((1000 * d.operated) / judged) / 10}%` : ''));
     });
   }
 
@@ -947,7 +954,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
   const hourText = h => (settings.timeFormat === '24h' ? `${String(h).padStart(2, '0')}:00` : hourLabel(h));
 
   return {
-    node: el('div', { className: 'analytics' }, el('div', { className: 'an-controls' }, periodBar, routeSelect, tabBar), note, content),
+    node: el('div', { className: 'analytics' }, el('div', { className: 'an-controls' }, el('div', { className: 'an-top' }, periodBar, helpLink), routeSelect, tabBar), note, content),
     sync: load,
     // Opens a tab, optionally for one route (e.g. from elsewhere in the app).
     show(nextTab, nextRoute = routeId) {
