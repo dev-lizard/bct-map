@@ -1624,3 +1624,48 @@ button.rel-row:hover {
   text-align: right;
   white-space: nowrap;
 }
+
+/* Bunching in progress: the popup a "!" marker opens. */
+.bunch-popup-shell .maplibregl-popup-content {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.bunch-popup-shell .maplibregl-popup-tip {
+  border-top-color: var(--panel-bg);
+  border-bottom-color: var(--panel-bg);
+}
+
+.bunch-popup-shell .maplibregl-popup-close-button {
+  color: var(--panel-muted);
+  font-size: 18px;
+}
+
+.bunch-popup {
+  display: grid;
+  gap: 6px;
+}
+
+.bunch-popup p {
+  margin: 0;
+}
+
+.bunch-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bunch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bunch-actions .small-button {
+  padding: 4px 8px;
+}

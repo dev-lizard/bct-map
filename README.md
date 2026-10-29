@@ -31,6 +31,7 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 - **Install:** on phones, "Add to Home Screen" installs it as an app. A service worker keeps the app and timetable cached so it reopens quickly.
 - **Your location:** the locate button (bottom left) shows where you are, or tells you how far outside Broward you are.
 - **Buses:** drawn in 3D, or as lighter 2D dots with heading arrows (Settings → Buses). "Automatic" switches to 2D if the map runs slowly.
+- **Bunching in progress:** a red "!" floats between two buses bunched right now (in 2D, a red badge). Click it for the route, how close they are against the timetable, at which stop, and either bus's trip. Worked out in the browser from the feed the page already loads, by the same rule the Bunching tab records.
 - **Header:** Broward time and current weather (Open-Meteo). Settings → Rain radar adds the US NEXRAD radar layer.
 - **Buses (rail):** every bus in the feed as a sortable, filterable table: route, bus number, destination, next stop, schedule adherence and report age. Click a row to show the bus; download it as CSV.
 - **Analytics (rail):** one period (today, 7 or 30 days, or custom dates within the last 30) and one route (or all) apply to every tab; tables sort by any column, rows open the route, stop or trip they describe, and every tab downloads as CSV. The **?** button opens an illustrated guide to every tab (`web/guide.html`), at the open tab's chapter.

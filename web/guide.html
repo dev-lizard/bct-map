@@ -259,7 +259,7 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Oct 29, 2026 (with a week of ridership)</span>
+    <span class="updated">Matches the app as of Oct 29, 2026 (live bunching marker)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -1004,6 +1004,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">2</span><div><strong>By hour of day:</strong> one column per hour, so you can see when bunching happens (usually the afternoon rush).</div></li>
           <li><span class="n">3</span><div><strong>Events:</strong> each one, with where and how close. <strong>▶ Replay</strong> plays both buses on the map as moving "ghost" buses around the moment they bunched, from their recorded GPS tracks. "Recording" means the replay is still being captured.</div></li>
         </ol>
+        <p class="callout">On the map, bunching shows as it happens: a red "!" floats between two buses bunched right now (a red badge in 2D). Click it for the route, how close they are against the timetable, at which stop, and buttons to open either bus's trip. It uses the same rule as this tab, worked out from the live feed in your browser.</p>
       </div>
     </div>
   </section>

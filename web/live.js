@@ -7,6 +7,7 @@
 //   - trip updates carry absolute times only, no delay -> compared against the timetable
 //   - trip updates have no vehicle block -> joined to vehicles by trip_id
 import { addDays, bearingDegrees, distanceMeters, serviceDayStart, servicesOn, ymdInZone } from './gtfs-util.js';
+import { findBunching } from './bunching.js';
 import { toSchedule } from './schedule.js';
 
 // Bearing is only recomputed once a bus has moved this far, so GPS jitter at a stop doesn't spin it.
@@ -127,6 +128,14 @@ export class LiveFeed {
       this.snapshot = this.#buildSnapshot(vehiclePositions, now);
     }
     return this.snapshot;
+  }
+
+  // Pairs of buses bunched right now, by the same rule the Analytics panel records (web/bunching.js),
+  // from the latest trip updates and the buses on them:
+  // [{ leaderBus, followerBus, leader, follower, routeId, direction, stopId, stopName, at, actualS, scheduledS }]
+  bunchedNow() {
+    return findBunching(this.#tripIndex.values(), this.trips, { timezone: this.timezone, busOnTrip: this.#vehicleByTrip })
+      .map(e => ({ ...e, leaderBus: this.#vehicleByTrip.get(e.leader), followerBus: this.#vehicleByTrip.get(e.follower), stopName: this.stops.get(e.stopId)?.name ?? null }));
   }
 
   // Scheduled and predicted times for every stop on one trip, on service date `date` (YYYYMMDD;

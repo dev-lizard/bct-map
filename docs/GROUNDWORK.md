@@ -550,6 +550,14 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Refreshing it:** run the script on a newer week's exports and commit the new `web/ridership.json`.
 - **Terminals left out of Shelters:** their bays ranked high among "no shelter" stops because the county's stop survey doesn't record a terminal's canopy as a shelter. Stops named "Terminal" or "Transit Center" (32 bays) are now left out, with a note under the table.
 
+**Phase 23 — bunching in progress, on the map ✅ (built and checked locally)**
+
+- **The rule moved** to `web/bunching.js`, shared by the browser and the servers (`server/analytics.mjs` re-exports it), so the live marker and the Bunching tab always agree.
+- **Live:** after each feed, `LiveFeed.bunchedNow()` runs the rule on the trip updates and buses the page already has. No new requests and no database reads or writes: nothing against the Cloudflare limits.
+- **Marker** (`web/bunch-markers.js`): in 3D, a red "!" (a 15 m bar over a dot, scaled with the buses when zoomed out) floating between the two buses and bobbing gently (still, if the device asks for reduced motion); in 2D, a red badge with a white "!". It follows the route filter and goes when the buses spread out.
+- **Click:** a popup in the app's panel style: the route, how far apart the buses are due at the stop against the timetable, and buttons to open the front or following bus's trip.
+- **Checked:** no buses were bunched at the time, so the browser's copy of the rule was patched for the session to treat two nearby route 12 buses as bunched: the 3D marker, the 2D badge, the popup and both trip buttons worked.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

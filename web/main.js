@@ -14,6 +14,7 @@ import { addDays, serviceDayStart, servicesOn, ymdInZone } from './gtfs-util.js'
 import { routesByStopPair, SPEED_BANDS } from './speeds.js';
 import { canceledTripDetails } from './canceled.js';
 import { createReplay } from './replay.js';
+import { createBunchMarkers } from './bunch-markers.js';
 import { createFrameMonitor, kmOutside, serviceArea } from './device.js';
 import { el, formatClock, formatDate, formatTime, formatWhen, icon, routeBadge, setTimeFormat } from './dom.js';
 import { linkSearch, parseLink } from './links.js';
@@ -650,6 +651,11 @@ function materialFor(color) {
 // Outline for the selected bus: a slightly larger box showing only its inside faces, so it reads as
 // a border around the bus. Re-parented onto whichever bus is selected.
 const selectionOutline = new THREE.Mesh(busGeometry, new THREE.MeshBasicMaterial({ color: theme.selected, side: THREE.BackSide }));
+
+// A red "!" over each pair of buses bunched right now (web/bunch-markers.js), worked out from each
+// feed in the browser, so it costs the API nothing.
+const bunchMarkers = createBunchMarkers({ map, scene, fromScene, reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false });
+let bunchPopup = null;
 selectionOutline.scale.set(1.2, 1.6, 1.25);
 selectionOutline.frustumCulled = false;
 
@@ -694,11 +700,12 @@ const vehicleLayer = {
       const s = scaleForZoom(zoom);
       for (const v of vehicles.values()) v.mesh.scale.setScalar(s);
     }
+    const bobbing = bunchMarkers.place(now, vehicles, scaleForZoom(zoom));
     camera.projectionMatrix.fromArray(args.defaultProjectionData.mainMatrix).multiply(originMatrix);
     camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
     renderer.resetState();
     renderer.render(scene, camera);
-    if (moving) map.triggerRepaint();
+    if (moving || bobbing) map.triggerRepaint();
   },
 };
 
@@ -869,6 +876,7 @@ function applyFeed(feed) {
       vehicles.delete(id);
     }
   }
+  bunchMarkers.set(live.bunchedNow());
   map.triggerRepaint();
   if (use2D) tick2D(); // show new and departed buses now, not at the next tick
   monitorFromMs ??= performance.now() + 3000; // let the first tiles and buses settle before judging
@@ -943,7 +951,7 @@ document.addEventListener('visibilitychange', () => {
 // In 2D the buses are MapLibre circles with a heading arrow. A timer moves them five times a second
 // instead of redrawing the whole map every frame, which is most of what makes 3D heavy.
 const TWO_D_UPDATE_MS = 200;
-const TWO_D_LAYERS = ['buses-2d-late', 'buses-2d', 'buses-2d-heading', 'buses-2d-selected'];
+const TWO_D_LAYERS = ['buses-2d-late', 'buses-2d', 'buses-2d-heading', 'buses-2d-selected', 'bunching-2d', 'bunching-2d-mark'];
 let use2D = settings.vehicles === '2d';
 let twoDTimer = null;
 const frameMonitor = createFrameMonitor();
@@ -997,6 +1005,21 @@ function addBuses2D(beforeId) {
       'circle-stroke-width': 3,
     },
   }, beforeId);
+  // Bunching in progress: a red "!" badge between the two buses.
+  map.addSource('bunching-2d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'bunching-2d',
+    type: 'circle',
+    source: 'bunching-2d',
+    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 13], 'circle-color': '#e0362c', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2, 'circle-translate': [0, -14] },
+  }, beforeId);
+  map.addLayer({
+    id: 'bunching-2d-mark',
+    type: 'symbol',
+    source: 'bunching-2d',
+    layout: { 'text-field': '!', 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 10, 12, 16, 18], 'text-allow-overlap': true, 'text-ignore-placement': true },
+    paint: { 'text-color': '#ffffff', 'text-translate': [0, -14] },
+  }, beforeId);
   setVehicleMode(use2D);
 }
 
@@ -1047,6 +1070,7 @@ function tick2D() {
     });
   }
   map.getSource('buses-2d').setData({ type: 'FeatureCollection', features });
+  map.getSource('bunching-2d')?.setData(bunchMarkers.features(vehicles));
 }
 
 // Automatic mode: if frames come too slowly while the buses animate, switch to 2D (once a visit).
@@ -1369,6 +1393,11 @@ function applyDisplaySettings() {
 
 // Buses win over stops: the nearest bus within CLICK_RADIUS_PX, else a stop under the pointer.
 map.on('click', e => {
+  const bunch = bunchMarkers.pick(e.point, vehicles, CLICK_RADIUS_PX, use2D);
+  if (bunch) {
+    showBunchPopup(bunch, e.lngLat);
+    return;
+  }
   let bus = null;
   let bestDistance = CLICK_RADIUS_PX;
   for (const v of vehicles.values()) {
@@ -1390,6 +1419,27 @@ map.on('click', e => {
   if (stop) openStop(stop.properties.id, { fly: false });
   else panel.close();
 });
+
+// What a bunching marker says when clicked: the route, how close the two buses are against the
+// timetable, at which stop, and a way to open either bus's trip.
+function showBunchPopup(event, lngLat) {
+  bunchPopup?.remove();
+  const gap = s => (s < 60 ? `${s} s` : `${Math.round(s / 60)} min`);
+  const busButton = (label, tripId, busId) => {
+    const b = el('button', { type: 'button', className: 'small-button' }, label);
+    b.addEventListener('click', () => {
+      bunchPopup?.remove();
+      openTrip(tripId, null, busId);
+    });
+    return b;
+  };
+  const body = el('div', { className: 'bunch-popup' },
+    el('div', { className: 'bunch-title' }, routeBadge(live.routeInfo(event.routeId)), el('strong', {}, 'Buses bunched')),
+    el('p', {}, `Due at ${event.stopName ?? 'the same stop'} ${gap(event.actualS)} apart; the timetable has them ${gap(event.scheduledS)} apart.`),
+    el('p', { className: 'status' }, 'Riders there get two buses at once, then a long wait for the next.'),
+    el('div', { className: 'bunch-actions' }, busButton(`Front bus ${event.leaderBus}`, event.leader, event.leaderBus), busButton(`Following bus ${event.followerBus}`, event.follower, event.followerBus)));
+  bunchPopup = new maplibregl.Popup({ closeButton: true, maxWidth: '280px', className: 'bunch-popup-shell' }).setLngLat(lngLat).setDOMContent(body).addTo(map);
+}
 
 // ---- Boot ------------------------------------------------------------------------------------
 
