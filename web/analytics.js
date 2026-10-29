@@ -37,9 +37,10 @@ const DIRECTIONS = ['outbound', 'inbound'];
 // routes: [{ routeId, routeShortName, ... }] in display order. route(routeId) -> route info.
 // stopName(id); stop(id) -> { lat, lon, name }; tripInfo(tripId, serviceDate) -> { headsign, start, end, stops }.
 // stopPairRoutes() -> Map "from>to" -> route ids. shelterStops() -> [{ id, name, city, routes,
-// amenities, buses (a weekday) }]. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
+// amenities, buses (a weekday), riders (boardings a weekday, or null) }]. ridership() -> the week of
+// boardings (web/ridership.json) or null. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
 // onCanceled(record, related); onBunching(event). settings: for the 12/24-hour clock.
-export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopPairRoutes, shelterStops, onStop, onTrip, onSpeedMap, onCanceled, onBunching, settings }) {
+export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopPairRoutes, shelterStops, ridership, onStop, onTrip, onSpeedMap, onCanceled, onBunching, settings }) {
   let days = 7; // how many days the period covers
   let custom = null; // { from, to } (YYYYMMDD) when the viewer picked dates, else null for the last `days`
   let routeId = null;
@@ -223,6 +224,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         ? el('p', { className: 'an-stat' }, el('strong', {}, pct(t.operated, judged)), ` of ${judged.toLocaleString('en-US')} scheduled trips ran in full (${routeText()}, ${periodText()})`)
         : el('p', { className: 'empty' }, 'Not enough recording yet: a trip is judged once the recorder has watched its whole run and it has been over for half an hour.'),
       t.stops > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Stops served'), el('strong', {}, `${rate(t.stopsServed, t.stops)}%`), el('span', { className: 'status' }, `of ${t.stops.toLocaleString('en-US')} stop visits promised`)),
+      ...ridersNotRun(missed),
       t.waitN > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Extra wait from trips not run'), el('strong', {}, `+${seconds(Math.round(t.waitS / t.waitN))}`), el('span', { className: 'status' }, `on average, ${t.waitN} ${t.waitN === 1 ? 'trip' : 'trips'}; ${t.waitS >= 5400 ? `${Math.round(t.waitS / 360) / 10} hours` : minutesText(t.waitS)} in all`)),
       el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} in full · ${t.partial} only partly · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
       el('p', { className: 'status' }, `A trip ran if a bus was seen on it, in the vehicle feed or by GPS. Only partly: GPS first saw it ${s.rules.partialS / 60}+ minutes into its timetable, or last saw it ${s.rules.partialS / 60}+ minutes before the end; a bus whose GPS failed looks the same (see Feed). Missed without notice: no bus ever showed and BCT never marked it canceled. Only finished trips count.`),
@@ -244,9 +246,35 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ...partial.slice(0, shown.partial ?? SHOW).map(m => tripRow(m, partNote(m), '')),
       moreButton('partial', partial.length),
       missed.length > 0 && el('h4', {}, `Missed without notice (${missed.length})`),
-      ...missed.slice(0, shown.missed ?? SHOW).map(m => tripRow(m, `no bus seen, not announced${m.extraWaitS ? `; riders waited +${seconds(m.extraWaitS)} for the next bus` : ''}`, 'cancel-missed')),
+      ...missed.slice(0, shown.missed ?? SHOW).map(m => {
+        const riders = ridersOnTrip(m.routeId, m.start);
+        return tripRow(m, `no bus seen, not announced${riders ? `; about ${Math.round(riders)} riders` : ''}${m.extraWaitS ? `, who waited +${seconds(m.extraWaitS)} for the next bus` : ''}`, 'cancel-missed');
+      }),
       moreButton('missed', missed.length),
       ...cancellations(),
+    ];
+  }
+
+  // Riders on the trips not run (missed without notice, and canceled ones GPS never saw run), and
+  // the rider-hours of extra waiting on the missed ones, estimated from the week of boardings.
+  function ridersNotRun(missed) {
+    if (!ridership()) return [];
+    const c = data.analytics.cancellations;
+    const canceled = (c?.notRun ?? []).filter(r => !routeId || r.routeId === routeId).map(r => ({ routeId: r.routeId, start: tripInfo(r.tripId, r.date)?.start }));
+    let riders = 0;
+    let trips = 0;
+    let riderWaitS = 0;
+    for (const m of [...missed, ...canceled]) {
+      const n = ridersOnTrip(m.routeId, m.start);
+      if (n == null) continue;
+      riders += n;
+      trips++;
+      if (m.extraWaitS) riderWaitS += n * m.extraWaitS;
+    }
+    if (!trips) return [];
+    return [
+      el('div', { className: 'an-kv' }, el('span', {}, 'Riders on trips not run'), el('strong', {}, `about ${Math.round(riders).toLocaleString('en-US')}`), el('span', { className: 'status' }, `on ${trips} ${trips === 1 ? 'trip' : 'trips'} missed or canceled, from a week of boardings`)),
+      riderWaitS > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Riders\' extra waiting'), el('strong', {}, `about ${Math.round(riderWaitS / 3600).toLocaleString('en-US')} h`), el('span', { className: 'status' }, 'rider-hours, on missed trips with a later bus')),
     ];
   }
 
@@ -271,6 +299,18 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       const label = formatDate(new Date(Date.UTC(+d.date.slice(0, 4), +d.date.slice(4, 6) - 1, +d.date.slice(6, 8), 17)));
       return el('div', { className: 'rel-row svc-day' }, el('span', { className: 'rel-hour' }, label), judged ? bar : el('span', { className: 'status' }, 'not judged'), el('span', { className: 'rel-pct' }, judged ? `${Math.round((1000 * d.operated) / judged) / 10}%` : ''));
     });
+  }
+
+  // About how many riders a trip carries: the route's average boardings per trip starting that hour,
+  // on that kind of day (weekday, Saturday, Sunday), from the week of fare-box data. null without it.
+  function ridersOnTrip(routeId, startS) {
+    const rides = ridership();
+    if (!rides || !startS) return null;
+    const when = new Date(startS * 1000);
+    const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(when));
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(when);
+    const type = weekday === 'Sat' ? 'saturday' : weekday === 'Sun' ? 'sunday' : 'weekday';
+    return rides.perTrip[routeId]?.[type]?.[hour] ?? null;
   }
 
   // Canceled trips (from /api/analytics), each opening its details. BCT marks many trips canceled
@@ -366,6 +406,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const arr = sv && mineOrAll(sv.arrival);
     const kv = (label, value, note) => el('div', { className: 'an-kv' }, el('span', {}, label), el('strong', {}, value), el('span', { className: 'status' }, note));
     return [head('On time', csv), intro, total, legend(),
+      ...riderWeightedOnTime(d, kv),
       d.latePct != null && kv('More than 10 min late', `${d.veryLatePct}%`, d.meanLateS != null ? `late buses averaged ${signed(d.meanLateS)}` : ''),
       any?.[0] && Object.assign(kv('Left any stop early', `${rate(any[1], any[0])}%`, `of ${any[0].toLocaleString('en-US')} departures, at every stop`), {
         title: 'Every stop riders board at, not just timepoints. Times at ordinary stops are BCT\'s timetable estimates between timepoints, as riders see them in trip planners.',
@@ -375,6 +416,33 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       !routeId && el('h4', {}, 'By route, with its worst hour (click for its hours)'), ...routeRows];
   }
   const pct = s => (s.samples < FEW ? `${s.onTimePct}%*` : `${s.onTimePct}%`);
+
+  // On time as riders experienced it: each route and hour counted by how many people board then
+  // (average over the week of boardings), rather than by how many buses depart.
+  function riderWeightedOnTime(d, kv) {
+    const rides = ridership();
+    if (!rides) return [];
+    const weekly = id => {
+      const h = rides.routeHours[id];
+      if (!h) return null;
+      return h.weekday.map((n, i) => (n * rides.days.weekday + h.saturday[i] * rides.days.saturday + h.sunday[i] * rides.days.sunday));
+    };
+    const cells = routeId
+      ? (d.byHour ?? []).map(h => ({ routeId, hour: h.hour, n: h.samples, onTime: (h.onTimePct ?? 0) / 100 }))
+      : Object.entries(d.routeHours ?? {}).flatMap(([id, hours]) => Object.entries(hours).map(([hour, [n, early, late]]) => ({ routeId: id, hour: Number(hour), n, onTime: n ? (n - early - late) / n : 0 })));
+    let weight = 0;
+    let onTime = 0;
+    for (const c of cells) {
+      const w = weekly(c.routeId)?.[c.hour] ?? 0;
+      if (!c.n || !w) continue;
+      weight += w;
+      onTime += w * c.onTime;
+    }
+    if (!weight) return [];
+    return [Object.assign(kv('On time for riders', `${Math.round((1000 * onTime) / weight) / 10}%`, 'each route and hour counted by how many people board then'), {
+      title: `From BCT's fare boxes, ${weekText(rides)}: a late 5 PM bus on a busy route counts for more than a late 6 AM bus on a quiet one.`,
+    })];
+  }
 
   // ---- Predictions -------------------------------------------------------------------------------
 
@@ -861,28 +929,43 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
 
   function renderShelters() {
     const all = shelterStops();
-    const intro = el('p', { className: 'status' }, 'Stops with no shelter in Broward County\'s stop survey, busiest first. BCT publishes no ridership, so buses leaving the stop on a weekday stand in for it. Rain and heat are much the same county-wide, so they don\'t change the order.');
+    const rides = ridership();
+    const byRiders = Boolean(rides);
+    const intro = el('p', { className: 'status' }, byRiders
+      ? `Stops with no shelter in Broward County's stop survey, busiest first: by riders boarding there on an average weekday, from BCT's fare boxes (${weekText(rides)}). Rain and heat are much the same county-wide, so they don't change the order.`
+      : 'Stops with no shelter in Broward County\'s stop survey, busiest first, by buses leaving the stop on a weekday. Rain and heat are much the same county-wide, so they don\'t change the order.');
     if (!all.length) return [head('Shelters', null), intro, el('p', { className: 'empty' }, 'Stop data is still loading.')];
     if (!all.some(s => s.amenities?.surveyed)) return [head('Shelters', null), intro, el('p', { className: 'empty' }, 'This build has no stop survey data.')];
-    const pool = (routeId ? all.filter(s => s.routes.includes(routeId)) : all).filter(s => s.buses > 0);
+    // Terminals and transit centers have their own canopies, which the stop survey doesn't record
+    // as shelters, so their bays are left out.
+    const isTerminal = s => /\bterminal\b|transit center/i.test(s.name);
+    const served = (routeId ? all.filter(s => s.routes.includes(routeId)) : all).filter(s => s.buses > 0);
+    const pool = served.filter(s => !isTerminal(s));
+    const terminals = served.length - pool.length;
     const surveyed = pool.filter(s => s.amenities?.surveyed);
     const lacking = surveyed.filter(s => !s.amenities.have.some(x => x.key === 'shelter'));
     const has = (s, key) => s.amenities.have.some(x => x.key === key);
-    const busy = lacking.filter(s => s.buses >= 100).length;
+    const busy = byRiders ? lacking.filter(s => (s.riders ?? 0) >= 100).length : lacking.filter(s => s.buses >= 100).length;
     return [
       head('Shelters', csvButton(`broward-stops-without-shelter-${routeId ? route(routeId).routeShortName : 'all'}.csv`, () => [
-        ['stop_id', 'stop_code', 'stop', 'city', 'buses_a_weekday', 'bench', 'lighting', 'routes', 'lat', 'lon'],
-        ...lacking.sort((x, y) => y.buses - x.buses).map(s => [s.id, s.code, s.name, s.city, s.buses, has(s, 'bench') ? 'yes' : 'no', has(s, 'lights') ? 'yes' : 'no', s.routes.map(r => route(r).routeShortName).join(' '), s.lat, s.lon]),
+        ['stop_id', 'stop_code', 'stop', 'city', 'riders_a_weekday', 'buses_a_weekday', 'bench', 'lighting', 'routes', 'lat', 'lon'],
+        ...lacking.sort((x, y) => (y.riders ?? 0) - (x.riders ?? 0) || y.buses - x.buses).map(s => [s.id, s.code, s.name, s.city, s.riders ?? '', s.buses, has(s, 'bench') ? 'yes' : 'no', has(s, 'lights') ? 'yes' : 'no', s.routes.map(r => route(r).routeShortName).join(' '), s.lat, s.lon]),
       ], lacking.length)),
       intro,
-      el('p', { className: 'an-stat' }, el('strong', {}, lacking.length.toLocaleString('en-US')), ` of ${surveyed.length.toLocaleString('en-US')} surveyed stops have no shelter (${routeText()})`, el('span', { className: 'status' }, ` · ${busy} of them see 100+ buses a weekday`)),
+      el('p', { className: 'an-stat' }, el('strong', {}, lacking.length.toLocaleString('en-US')), ` of ${surveyed.length.toLocaleString('en-US')} surveyed stops have no shelter (${routeText()})`, el('span', { className: 'status' }, ` · ${busy} of them ${byRiders ? 'have 100+ riders boarding' : 'see 100+ buses'} a weekday`)),
       table('shelters', [
         { key: 'name', label: 'Stop', value: s => s.name, render: s => el('span', {}, s.name, s.city ? el('span', { className: 'status' }, ` · ${s.city}`) : null) },
+        byRiders && { key: 'riders', label: 'Riders', num: true, value: s => s.riders ?? -1, render: s => (s.riders == null ? '–' : String(Math.round(s.riders))) },
         { key: 'buses', label: 'Buses', num: true, value: s => s.buses },
         { key: 'bench', label: 'Bench', value: s => (has(s, 'bench') ? 1 : 0), render: s => (has(s, 'bench') ? 'yes' : el('strong', { className: 'late' }, 'no')) },
         { key: 'routes', label: 'Routes', value: s => s.routes.length, render: s => el('span', { className: 'badges' }, ...s.routes.slice(0, 3).map(r => routeBadge(route(r))), s.routes.length > 3 ? ` +${s.routes.length - 3}` : '') },
-      ], lacking, { sort: { key: 'buses', dir: -1 }, onRow: s => onStop(s.id) }),
-      pool.length > surveyed.length && el('p', { className: 'status' }, `${(pool.length - surveyed.length).toLocaleString('en-US')} stops aren't in the survey and are left out. Buses: departures on the next weekday's timetable.`),
+      ].filter(Boolean), lacking, { sort: { key: byRiders ? 'riders' : 'buses', dir: -1 }, onRow: s => onStop(s.id) }),
+      el('p', { className: 'status' }, [
+        pool.length > surveyed.length && `${(pool.length - surveyed.length).toLocaleString('en-US')} stops aren't in the survey and are left out.`,
+        terminals > 0 && `${terminals} terminal and transit center bays are left out: they're under the station's own canopy.`,
+        byRiders && 'Riders: average weekday boardings.',
+        'Buses: departures on the next weekday\'s timetable.',
+      ].filter(Boolean).join(' ')),
     ];
   }
 
@@ -1058,6 +1141,8 @@ const excessOf = ([n, a, a2, s, s2] = []) => (n && a && s ? Math.round(a2 / (2 *
 const ymdDate = d => new Date(Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), 17));
 const weekdayIndex = d => (ymdDate(d).getUTCDay() + 6) % 7;
 const dateLabel = d => formatDate(ymdDate(d));
+// "the week of Oct 18–24" for the fare-box data.
+const weekText = rides => `the week of ${dateLabel(rides.week[0])}–${dateLabel(rides.week[1])}`;
 // YYYYMMDD <-> a date input's YYYY-MM-DD.
 const toYmdInput = d => `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
 const fromYmdInput = v => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v.replaceAll('-', '') : null);

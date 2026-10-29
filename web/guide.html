@@ -259,7 +259,7 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Oct 29, 2026 (BCT on-time rule, rider measures)</span>
+    <span class="updated">Matches the app as of Oct 29, 2026 (with a week of ridership)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -420,6 +420,8 @@ table.m tr.hl td { background: var(--m-hover); }
         <span class="example">Example numbers</span>
         <div class="mock">
           <div class="kv"><span class="kv-label"><span class="n sm">10</span>Stops served</span><strong>92.4%</strong><span class="s">of 140,445 stop visits promised</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">12</span>Riders on trips not run</span><strong>about 1,991</strong><span class="s">on 84 trips missed or canceled, from a week of boardings</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">13</span>Riders' extra waiting</span><strong>about 179 h</strong><span class="s">rider-hours, on missed trips with a later bus</span></div>
           <div class="kv"><span class="kv-label"><span class="n sm">11</span>Extra wait from trips not run</span><strong>+50.9 min</strong><span class="s">on average, 63 trips; 53.4 hours in all</span></div>
           <div class="m-sub">By route (two more columns)</div>
           <div class="tablewrap"><table class="m">
@@ -429,12 +431,14 @@ table.m tr.hl td { background: var(--m-hover); }
         </div>
       </figure>
       <div class="words">
-        <p>Two figures under the headline put service in riders' terms:</p>
+        <p>Under the headline, these put service in riders' terms:</p>
         <ol>
           <li><span class="n">10</span><div><strong>Stops served:</strong> every trip promises a stop visit at each of its stops. This is the share of those visits a bus actually made, over the trips that could be judged. A trip cut short counts the stops it reached, so the riders waiting further along count as missed.</div></li>
           <li><span class="n">11</span><div><strong>Extra wait from trips not run:</strong> for each trip missed or canceled, how long riders waited for the next bus on the same route and direction that did run. Shown as an average and a total. It isn't counted when the recorder couldn't see the trips in between, or when nothing later that day ran.</div></li>
+          <li><span class="n">12</span><div><strong>Riders on trips not run:</strong> about how many people those trips would have carried. Each trip counts the route's average boardings per trip starting at that hour, on that kind of day (weekday, Saturday or Sunday), from a week of BCT's fare-box data. Each missed trip in the list shows its own estimate too.</div></li>
+          <li><span class="n">13</span><div><strong>Riders' extra waiting:</strong> those riders times the extra wait for the next bus, added up, in rider-hours. It's the closest single number to how much time riders lost.</div></li>
         </ol>
-        <p class="muted">Both are also columns in the by-route table and the CSV.</p>
+        <p class="muted">Stops served and extra wait are also columns in the by-route table and the CSV. The rider estimates are averages from one week of boardings (Oct 18–24, 2026), so treat them as approximate.</p>
       </div>
     </div>
   </section>
@@ -481,6 +485,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <div class="m-head"><h4>On time</h4><span class="m-btn">CSV</span></div>
           <div class="with-n"><span class="n">1</span><div class="srow"><strong class="lbl">All</strong><span class="sbar"><span class="c-early" style="flex:17"></span><span class="c-ok" style="flex:61"></span><span class="c-late" style="flex:22"></span></span><strong class="pct">61.6%</strong></div></div>
           <div class="legend"><span><span class="sw c-early"></span>Early</span><span><span class="sw c-ok"></span>On time</span><span><span class="sw c-late"></span>Late</span><span>* under 20 departures</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">7</span>On time for riders</span><strong>62.0%</strong><span class="s">each route and hour counted by how many people board then</span></div>
           <div class="kv"><span class="kv-label"><span class="n sm">2</span>More than 10 min late</span><strong>6.9%</strong><span class="s">late buses averaged +10.1 min</span></div>
           <div class="kv"><span class="kv-label"><span class="n sm">3</span>Left any stop early</span><strong>27.9%</strong><span class="s">of 258 departures, at every stop</span></div>
           <div class="kv"><span class="kv-label"><span class="n sm">4</span>Reached the end on time</span><strong>71.0%</strong><span class="s">less than 5 min late, of 410 trips; 9.5% over 10 min late</span></div>
@@ -501,6 +506,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">4</span><div><strong>Reached the end on time:</strong> riders going to work or a connection care when they arrive. This is the share of trips that reached their last stop less than 5 minutes late (arriving early is fine for someone on board).</div></li>
           <li><span class="n">5</span><div><strong>By hour:</strong> what riders experience depends on when they ride, so the hours come first, for all routes or the one picked.</div></li>
           <li><span class="n">6</span><div><strong>By route:</strong> each route's bar, and on the right its <strong>worst hour</strong> (with at least 20 departures), so the rider who has it worst isn't hidden in the day's average. Click a route for all its hours.</div></li>
+          <li><span class="n">7</span><div><strong>On time for riders:</strong> the same on-time share, but each route and hour counts by how many people board then (from a week of BCT's fare-box data), not by how many buses leave. A late 5 PM bus on a busy route counts for more than a late 6 AM bus on a quiet one, so this is closer to the share of riders whose bus was on time.</div></li>
         </ol>
         <p class="callout">A route with a big yellow slice runs early too often: its timetable may be too loose, or drivers may be leaving early.</p>
       </div>
@@ -1089,12 +1095,12 @@ table.m tr.hl td { background: var(--m-hover); }
         <span class="example">Example numbers</span>
         <div class="mock">
           <div class="m-head"><h4>Shelters</h4><span class="m-btn">CSV</span></div>
-          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>3,148</strong> of 4,505 surveyed stops have no shelter <span class="m-note">· 36 of them see 100+ buses a weekday</span></div></div>
+          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>3,126</strong> of 4,480 surveyed stops have no shelter <span class="m-note">· 8 of them have 100+ riders boarding a weekday</span></div></div>
           <div class="tablewrap"><table class="m">
-            <thead><tr><th>Stop<span class="n">2</span></th><th class="num">Buses<span class="n">3</span></th><th>Bench<span class="n">4</span></th><th>Routes</th></tr></thead>
+            <thead><tr><th>Stop<span class="n">2</span></th><th class="num">Riders<span class="n">3</span></th><th class="num">Buses<span class="n">4</span></th><th>Bench<span class="n">5</span></th><th>Routes</th></tr></thead>
             <tbody>
-              <tr><td>Pine Island Rd/Broward Blvd <span class="m-note">· Plantation</span></td><td class="num">305</td><td>yes</td><td><span class="badge" style="background:#DDA68A">02</span> <span class="badge" style="background:#876500">12</span> +4</td></tr>
-              <tr class="hl"><td>NW 2nd St/NW 84th Ave <span class="m-note">· Plantation</span></td><td class="num">281</td><td><span class="late">no</span></td><td><span class="badge" style="background:#DDA68A">02</span> <span class="badge" style="background:#876500">12</span> +4</td></tr>
+              <tr><td>Sawgrass Mills <span class="m-note">· Sunrise</span></td><td class="num">547</td><td class="num">124</td><td>yes</td><td><span class="badge" style="background:#BF83B9">22</span> <span class="badge" style="background:#C88A12">36</span> +2</td></tr>
+              <tr class="hl"><td>NW 2nd St/NW 84th Ave <span class="m-note">· Plantation</span></td><td class="num">212</td><td class="num">281</td><td><span class="late">no</span></td><td><span class="badge" style="background:#DDA68A">02</span> <span class="badge" style="background:#876500">12</span> +4</td></tr>
             </tbody>
           </table></div>
         </div>
@@ -1103,10 +1109,11 @@ table.m tr.hl td { background: var(--m-hover); }
         <ol>
           <li><span class="n">1</span><div><strong>The count</strong> of surveyed stops without a shelter, and how many of those are very busy.</div></li>
           <li><span class="n">2</span><div><strong>Stop</strong> and its city. Click a row to open the stop on the map.</div></li>
-          <li><span class="n">3</span><div><strong>Buses:</strong> how many buses leave the stop on a weekday, from the timetable. BCT publishes no ridership counts, so this stands in for how many people wait there.</div></li>
-          <li><span class="n">4</span><div><strong>Bench:</strong> whether there's at least somewhere to sit. A busy stop with no shelter <em>and</em> no bench is the strongest case.</div></li>
+          <li><span class="n">3</span><div><strong>Riders:</strong> how many people board at the stop on an average weekday, from a week of BCT's fare-box data (Oct 18–24, 2026). The list is ranked by this: it's how many people wait there.</div></li>
+          <li><span class="n">4</span><div><strong>Buses:</strong> how many buses leave the stop on a weekday, from the timetable. A stop with few riders but many buses is mostly a pass-through.</div></li>
+          <li><span class="n">5</span><div><strong>Bench:</strong> whether there's at least somewhere to sit. A busy stop with no shelter <em>and</em> no bench is the strongest case.</div></li>
         </ol>
-        <p class="muted">Stops the survey doesn't cover are left out (the count is shown below the table). Rain and heat aren't used to rank stops, because the weather is much the same county-wide. The CSV includes each stop's coordinates and lighting.</p>
+        <p class="muted">Stops the survey doesn't cover are left out (the count is shown below the table). Bays at terminals and transit centers (Broward Central Terminal, West Regional Terminal, Lauderhill and Northeast Transit Centers) are left out too: they're under the station's own canopy, which the survey doesn't record as a shelter. Rain and heat aren't used to rank stops, because the weather is much the same county-wide. The CSV includes each stop's riders, coordinates and lighting.</p>
       </div>
     </div>
   </section>

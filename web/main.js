@@ -451,17 +451,22 @@ async function addRouteLines(folder, beforeId) {
 // ---- Stops -----------------------------------------------------------------------------------
 
 const stopsById = new Map(); // stop_id -> { id, code, name, lon, lat, routes: [route_id], amenities, city }
+// A week of BCT's boardings as totals by stop and by route and hour (web/ridership.json, built by
+// scripts/build-ridership.mjs), for weighting Analytics by riders; null if the file is missing.
+let ridership = null;
 let shownStopsKey = null;
 
 // Stops as circles from zoom 14, with names from 16.5. Which stops show depends on the Stops setting
 // and the route filter (see updateStops). Returns stops.json, which the live feed needs too.
 async function addStops(folder, circlesBeforeId, labelsBeforeId) {
-  const [stops, stopRoutes, amenities] = await Promise.all([
+  const [stops, stopRoutes, amenities, riders] = await Promise.all([
     getJson(`data/${folder}/stops.json`),
     getJson(`data/${folder}/stop_routes.json`),
     // Shelters, benches and so on; optional, since builds before it existed don't have the file.
     getJson(`data/${folder}/amenities.json`).catch(() => null),
+    getJson('ridership.json').catch(() => null),
   ]);
+  ridership = riders?.v === 1 ? riders : null;
   for (const [id, code, lat, lon, name, locationType] of stops) {
     if (locationType !== 0 || !stopRoutes[id]) continue;
     const [mask, city] = amenities?.stops[id] ?? [0, null];
@@ -1216,7 +1221,7 @@ function shelterStops() {
   const weekday = d => new Date(Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8))).getUTCDay();
   while (weekday(date) === 0 || weekday(date) === 6) date = addDays(date, 1);
   const buses = live.schedule.departuresByStop(servicesOn(date, live.calendar, live.exceptions));
-  shelterStopsCache = [...stopsById.values()].map(s => ({ ...s, buses: buses.get(s.id) ?? 0 }));
+  shelterStopsCache = [...stopsById.values()].map(s => ({ ...s, buses: buses.get(s.id) ?? 0, riders: ridership?.stops[s.id]?.[0] ?? null }));
   return shelterStopsCache;
 }
 
@@ -1272,6 +1277,7 @@ function createShell() {
     stop: stopId => stopsById.get(stopId) ?? null,
     stopPairRoutes: () => (stopPairRoutesCache ??= live ? routesByStopPair(live.trips) : new Map()),
     shelterStops,
+    ridership: () => ridership,
     onSpeedMap: showSpeedLayer,
     async onBunching(event) {
       const key = `${event.date}|${event.leader}|${event.follower}`;

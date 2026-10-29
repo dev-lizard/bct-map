@@ -539,6 +539,17 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Tests:** 116.
 - **Ridership:** a week of stop-level boardings would let these be weighted by riders instead of trips; not built yet (needs the data).
 
+**Phase 22 — weighting by riders, from a week of fare-box data ✅ (built and checked locally)**
+
+- **The data:** BCT's fare-box exports for Oct 18–24, 2026, one CSV per service day (4 AM to about 2 AM; rides after midnight are already filed under the day before), one row per boarding: about 391,000 rows. Stop numbers match BCT's stop ids or codes once their leading zeros are restored (89%); another 1.3% match by location (the nearest stop on that route within 60 m); 9.4% have no stop and count only toward route and hour totals. The two garages (Copans, Ravenswood: about 9,000 boardings) are left out.
+- **Privacy:** the exports hold card data, ticket, device and driver fields. `scripts/build-ridership.mjs` reads them from outside the repo and writes only totals to `web/ridership.json` (98 KB): average boardings a day by stop (weekday, Saturday, Sunday), by route and clock hour, and per trip starting each hour. CLAUDE.md keeps the rule.
+- **Used for:**
+  - **Shelters:** ranked by riders boarding a weekday (buses stay as a column).
+  - **Service:** riders on trips not run (missed, and canceled ones never run), from the route's average boardings per trip at that hour and kind of day; rider-hours of extra waiting; each missed trip shows its estimate.
+  - **On time:** "On time for riders": each route and hour weighted by its boardings (from per-route, per-hour counts the on-time summary now includes). 62.0% against 61.7% by departures on the local data.
+- **Refreshing it:** run the script on a newer week's exports and commit the new `web/ridership.json`.
+- **Terminals left out of Shelters:** their bays ranked high among "no shelter" stops because the county's stop survey doesn't record a terminal's canopy as a shelter. Stops named "Terminal" or "Transit Center" (32 bays) are now left out, with a note under the table.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

@@ -42,7 +42,7 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
   - **Schedule:** each route's and each trip's running time against the timetable, late starts against time lost along the way, and for one route, the average delay at each timepoint in order, showing where it builds up.
   - **Speeds:** bus speeds and congestion between stops from GPS, with a map layer. **Bunching:** events by route and hour, each with a replay of the two buses as "ghosts" on the map. **Weather:** on time and running time in dry, rainy and stormy hours.
   - **Trends:** every measure day by day, the last 7 days against the 7 before, by day of the week, and the worst days for on-time with the rain, cancellations and bunching that day.
-  - **Shelters:** stops with no shelter in the county's stop survey, ranked by buses a weekday.
+  - **Shelters:** stops with no shelter in the county's stop survey, ranked by riders boarding there on a weekday.
   - **Feed:** the quality of BCT's live feed (stale GPS reports, buses going silent or vanishing mid-trip, predictions that are only the timetable, canceled trips that ran), by day and route.
 - **Rail (left):** Routes (filter which routes are shown, or pick one to zoom to it), Search (stops by name or number, routes by number or name), Alerts, and Settings. Settings and the route filter are saved in your browser.
 - **Theme:** day or night is picked by the time in Broward, unless you choose one in Settings. `?theme=day` or `?theme=night` in the URL overrides both.
@@ -54,6 +54,7 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 |---|---|
 | `npm run build:static` | Builds the route, stop, shape and timetable JSON from BCT's GTFS zip. Pass a local zip path or URL to override the source. |
 | `npm run dev` | Starts the local server: the API, the web app, feed polling, and a nightly timetable rebuild at 3:30 AM Broward time. Optional env vars: `PORT`, `REFRESH_MS`, `NIGHTLY_BUILD_AT` (`HH:MM` or `off`), `CONTRACT_FEED_BASE` (the contracted routes' feeds; see docs/DEPLOY.md). |
+| `node scripts/build-ridership.mjs <folder>` | Turns a week of BCT fare-box exports (one CSV per service day) into `web/ridership.json`: totals by stop, and by route and hour, for weighting Analytics by riders. Only totals are written; the exports stay out of the repository. |
 | `npm run dev:worker` | Runs the Cloudflare Worker locally on port 8788 (needs `npm run dev` running too). |
 | `npm run build:site` | Assembles the GitHub Pages site in `_site/`; `API_URL` sets the Worker address. `build:site:local` points it at the local Worker. |
 | `node scripts/make-icons.mjs` | Redraws the app icons in `web/icons/` |

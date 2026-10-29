@@ -1,5 +1,13 @@
 # Broward Transit 3D
 
+## Ridership data stays private
+
+BCT's fare-box exports (one row per boarding, with card data, ticket, device and driver fields) must
+never be copied into this repository, published or sent anywhere. `scripts/build-ridership.mjs`
+reads them from a folder outside the repo and writes only totals (by stop, and by route and hour) to
+`web/ridership.json`, which is public with the site. Keep it that way: no per-boarding records,
+IDs or driver fields in anything the app loads.
+
 ## Keep the Analytics guide in step with the app
 
 `web/guide.html` is the illustrated guide to every Analytics tab. It ships with the site and opens

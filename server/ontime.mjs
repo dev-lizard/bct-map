@@ -104,6 +104,14 @@ export function summarize(counts, { days, routeId = null, collectingSince = null
     // Each route with its worst hour (lowest on-time, with enough departures to trust).
     const byRouteRows = new Map();
     for (const c of rows) (byRouteRows.get(c.routeId) ?? byRouteRows.set(c.routeId, []).get(c.routeId)).push(c);
+    // route -> hour -> [departures, early, late], for weighting by riders in the browser.
+    result.routeHours = {};
+    for (const c of rows) {
+      const cell = ((result.routeHours[c.routeId] ??= {})[c.hour] ??= [0, 0, 0]);
+      cell[0] += c.n;
+      cell[1] += c.early;
+      cell[2] += c.late;
+    }
     result.routes = [...groupBy('routeId')].map(([id, c]) => {
       const worst = byHour(byRouteRows.get(id)).filter(h => h.samples >= MIN_HOUR_SAMPLES).sort((a, b) => a.onTimePct - b.onTimePct)[0];
       return { routeId: id, ...stats(c), worstHour: worst ? { hour: worst.hour, onTimePct: worst.onTimePct } : null };
