@@ -1588,6 +1588,10 @@ button.rel-row:hover {
   gap: 2px 8px;
 }
 
+.an-range[hidden] {
+  display: none;
+}
+
 .an-range label {
   grid-row: 1;
   color: var(--panel-muted);
