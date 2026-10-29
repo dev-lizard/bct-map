@@ -9,6 +9,7 @@ import { dateRange } from './range.mjs';
 
 const MAX_ALERTS = 5;
 const MAX_RECENT = 300;
+const MAX_NOT_RUN = 2000; // a cap only: trips really not run number a dozen or two a day
 
 // Alerts feed -> Map of trip id -> [{ header, description, cause, effect }].
 export function alertsByTrip(alertFeed) {
@@ -146,7 +147,9 @@ export class CancellationLog {
     return out;
   }
 
-  // The last `days` service days, or from..to: totals, by route, by date, and every record (newest first).
+  // The last `days` service days, or from..to: totals, by route, by date, and the records (newest
+  // first). Most trips BCT marks canceled are run anyway, so the ones GPS never saw run are sent
+  // whole (`notRun`), and the rest only as the newest MAX_RECENT (`recent` holds both kinds).
   summary({ days = 7, from = null, to = null, nowS = Date.now() / 1000 } = {}) {
     const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
     const inRange = date => date >= range.from && date <= range.to;
@@ -154,13 +157,18 @@ export class CancellationLog {
     for (const [date, day] of this.#days) if (inRange(date)) for (const r of day.values()) rows.push({ date, ...r });
     rows.sort((a, b) => b.firstSeenAt - a.firstSeenAt);
     const byRoute = new Map();
-    for (const r of rows) byRoute.set(r.routeId, (byRoute.get(r.routeId) ?? 0) + 1);
+    for (const r of rows) {
+      const route = byRoute.get(r.routeId) ?? byRoute.set(r.routeId, { routeId: r.routeId, trips: 0, ran: 0 }).get(r.routeId);
+      route.trips++;
+      if (r.stopsPassed > 0) route.ran++;
+    }
     return {
       total: rows.length,
       ranAnyway: rows.filter(r => r.stopsPassed > 0).length,
       restored: rows.filter(r => r.restoredAt != null).length,
-      byRoute: [...byRoute].map(([routeId, trips]) => ({ routeId, trips })).sort((a, b) => b.trips - a.trips),
+      byRoute: [...byRoute.values()].sort((a, b) => b.trips - a.trips), // [{ routeId, trips, ran }]
       byDate: Object.fromEntries([...this.#days].filter(([date]) => inRange(date)).map(([date, day]) => [date, day.size])),
+      notRun: rows.filter(r => r.stopsPassed === 0).slice(0, MAX_NOT_RUN),
       recent: rows.slice(0, MAX_RECENT),
     };
   }

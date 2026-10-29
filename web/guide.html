@@ -218,6 +218,7 @@ table.m tr.hl td { background: var(--m-hover); }
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--m-hover); border-radius: 8px; padding: 3px; font-size: 12px; text-align: center; }
 .seg span { padding: 5px; border-radius: 6px; }
 .seg span.on { background: var(--m-bg); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.15); }
+.link-mock { color: var(--accent); font-size: 12px; }
 .select { border: 1px solid var(--m-rule); border-radius: 8px; padding: 7px 10px; font-size: 13px; display: flex; justify-content: space-between; }
 .range-mock { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 8px; }
 .range-mock .m-note { font-size: 11px; }
@@ -258,7 +259,7 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Oct 29, 2026 (custom dates added)</span>
+    <span class="updated">Matches the app as of Oct 29, 2026 (canceled trips split)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -367,9 +368,13 @@ table.m tr.hl td { background: var(--m-hover); }
           <div class="event"><span class="when">4:10 PM</span><span class="badge" style="background:#0079C1">14</span><span class="what">Central Terminal Via Tri-Rail <span class="m-note">· last 22 min not run</span></span></div>
           <div class="m-sub"><span class="n sm">6</span>Missed without notice (43)</div>
           <div class="event"><span class="when">2:03 PM</span><span class="badge" style="background:#B95915">72</span><span class="what">Oakland Park Blvd <span class="late">· no bus seen, not announced</span></span></div>
-          <div class="m-sub"><span class="n sm">7</span>Canceled trips (251)</div>
-          <div class="event"><span class="when">2:50 PM</span><span class="badge" style="background:#009DDC">40</span><span class="what">Lauderhill Transit Center <span class="m-note">· partly run: 21% of the trip (15 of 73 stops)</span></span></div>
-          <div class="event"><span class="when">4:16 PM</span><span class="badge" style="background:#0079C1">14</span><span class="what">Central Terminal <span class="good">· ran anyway: 96% of the trip (64 of 67 stops)</span></span></div>
+          <div class="m-sub"><span class="n sm">7</span>Canceled trips (274)</div>
+          <div class="m-sub"><span class="n sm">8</span>Not run (13)</div>
+          <div class="event"><span class="when">9:24 AM</span><span class="badge" style="background:#0079C1">14</span><span class="what">Central Terminal Via Tri-Rail <span class="late">· no bus seen</span></span></div>
+          <div class="event"><span class="when">10:38 AM</span><span class="badge" style="background:#9E6614">42</span><span class="what">Atlantic - Coral Ridge <span class="late">· bus 2221 assigned · still within its run</span></span></div>
+          <div class="m-sub"><span class="n sm">9</span>Marked canceled but ran (255)</div>
+          <div class="m-note">GPS saw a bus run 255 of the 274 trips marked canceled, at least partly.</div>
+          <span class="link-mock">Show these trips</span>
         </div>
       </figure>
       <div class="words">
@@ -377,8 +382,11 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">4</span><div><strong>By route.</strong> The same groups for each route, worst first. Click a row to narrow every tab to that route.</div></li>
           <li><span class="n">5</span><div><strong>Ran only partly.</strong> Each partial trip, and which end wasn't run ("first 18 min not run", "last 22 min not run"). Click one to open its timetable.</div></li>
           <li><span class="n">6</span><div><strong>Missed without notice.</strong> Trips that never ran and were never announced. These are the ones riders waited for in vain.</div></li>
-          <li><span class="n">7</span><div><strong>Canceled trips.</strong> Every trip BCT marked canceled, with what a bus actually did: what share of the trip's stops a bus served ("so far" while it's still running), whether BCT put it back on the schedule, or that no bus was seen. Click one for the full story.</div></li>
+          <li><span class="n">7</span><div><strong>Canceled trips:</strong> every trip BCT's feed marked canceled at some point. Most were run anyway: BCT often flags late-running trips as canceled, sometimes for only a few minutes. So the list is split in two.</div></li>
+          <li><span class="n">8</span><div><strong>Not run:</strong> marked canceled, and GPS never saw a bus on them. These are the cancellations riders really faced, listed first. Each says what's known: no bus seen, a bus stayed assigned, or BCT put it back on the schedule. "Still within its run" means the trip's timetabled time isn't over, so it may yet run.</div></li>
+          <li><span class="n">9</span><div><strong>Marked canceled but ran:</strong> a count, with the list folded away behind "Show these trips". Each says how much of the trip a bus served ("ran anyway: 96% of the trip", or "partly run: 21%"), with "so far" while it's still running. The Feed tab counts these as a data problem.</div></li>
         </ol>
+        <p class="muted">Click any trip for its full story. The CSV includes both kinds.</p>
       </div>
     </div>
 
@@ -403,7 +411,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><div>the bus that was assigned, and BCT's alert text;</div></li>
           <li><div>the gap riders faced: the trips just before and after it, so you can see how long the wait became.</div></li>
         </ul>
-        <p class="callout">In the last week of October, GPS saw a bus run about 3 in 4 of the trips BCT marked canceled.</p>
+        <p class="callout">On Oct 29, BCT marked 274 trips canceled at some point, and GPS saw a bus run 255 of them. Only about a dozen were really not run.</p>
       </div>
     </div>
   </section>

@@ -269,22 +269,38 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     });
   }
 
-  // Canceled trips (from /api/analytics), each opening its details.
+  // Canceled trips (from /api/analytics), each opening its details. BCT marks many trips canceled
+  // that buses then run, so the ones GPS never saw run come first; the rest are counted, with
+  // their list folded away.
   function cancellations() {
     const c = data.analytics.cancellations;
     if (!c) return [];
-    const records = routeId ? c.recent.filter(r => r.routeId === routeId) : c.recent;
-    const rows = records.slice(0, shown.canceled ?? SHOW).map(r => {
+    const mine = list => (routeId ? list.filter(r => r.routeId === routeId) : list);
+    // Every record we have, once each (notRun is complete; recent is the newest of both kinds).
+    const all = [...new Map([...(c.notRun ?? []), ...c.recent].map(r => [`${r.date}|${r.tripId}`, r])).values()].sort((a, b) => b.firstSeenAt - a.firstSeenAt);
+    const records = mine(all);
+    const notRun = records.filter(r => r.stopsPassed === 0);
+    const ranShown = records.filter(r => r.stopsPassed > 0);
+    const counts = routeId ? c.byRoute.find(r => r.routeId === routeId) ?? { trips: 0, ran: 0 } : { trips: c.total, ran: c.ranAnyway };
+    // A trip still within its timetabled run (plus half an hour) isn't over yet: say so.
+    const stillRunning = (r, info) => (!info?.end || info.end + 1800 < Date.now() / 1000 ? '' : r.stopsPassed > 0 ? ' so far' : ' · still within its run');
+    const row = r => {
       const info = tripInfo(r.tripId, r.date);
       const b = el('button', { type: 'button', className: 'an-event an-canceled' },
         el('span', { className: 'an-when' }, info?.start ? formatWhen(info.start) : formatWhen(r.firstSeenAt)), routeBadge(route(r.routeId)),
-        el('span', {}, info?.headsign ?? r.tripId, el('span', { className: `status cancel-${r.stopsPassed > 0 ? 'ran' : r.restoredAt != null ? 'restored' : 'missed'}` }, ` · ${verdictLabel(r, info?.stops)}${r.stopsPassed > 0 && info?.end > Date.now() / 1000 ? ' so far' : ''}`)));
+        el('span', {}, info?.headsign ?? r.tripId, el('span', { className: `status cancel-${r.stopsPassed > 0 ? 'ran' : r.restoredAt != null ? 'restored' : 'missed'}` }, ` · ${verdictLabel(r, info?.stops)}${stillRunning(r, info)}`)));
       b.title = 'Show the details of this canceled trip';
-      b.addEventListener('click', () => onCanceled(r, c.recent.filter(x => x.routeId === r.routeId && x.date === r.date)));
+      b.addEventListener('click', () => onCanceled(r, all.filter(x => x.routeId === r.routeId && x.date === r.date)));
       return b;
+    };
+    const showRan = el('button', { type: 'button', className: 'link an-more' }, `Show these trips${counts.ran > ranShown.length ? ` (the newest ${ranShown.length})` : ''}`);
+    showRan.addEventListener('click', () => {
+      shown.canceledRan = SHOW;
+      render();
     });
+    const ranOpen = shown.canceledRan != null;
     return [
-      head(`Canceled trips (${records.length})`, csvButton(`broward-cancellations-${slug()}.csv`, () => [
+      head(`Canceled trips (${counts.trips})`, csvButton(`broward-cancellations-${slug()}.csv`, () => [
         ['service_date', 'route', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened', 'trip_stops', 'pct_of_stops_run'],
         ...records.map(r => {
           const info = tripInfo(r.tripId, r.date);
@@ -293,9 +309,18 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
             r.alerts.map(a => [a.header, a.description].filter(Boolean).join(': ')).join(' | '), verdictLabel(r, info?.stops), info?.stops, info?.stops ? sharePct(r, info.stops) : ''];
         }),
       ], records.length)),
-      el('p', { className: 'status' }, 'BCT also marks trips canceled that buses then run, often with a "Delayed" alert: each shows what GPS saw. Click one for the details.'),
-      ...rows,
-      moreButton('canceled', records.length),
+      el('p', { className: 'status' }, 'Trips BCT\'s feed marked canceled at some point. Most of them a bus ran anyway: BCT often flags late-running trips this way, sometimes for only a few minutes. Click a trip for the details.'),
+      el('h4', {}, `Not run (${notRun.length})`),
+      notRun.length
+        ? el('p', { className: 'status' }, 'Marked canceled, and GPS never saw a bus on them: the cancellations riders really faced.')
+        : el('p', { className: 'empty' }, 'None: GPS saw a bus run every trip marked canceled.'),
+      ...notRun.slice(0, shown.canceled ?? SHOW).map(row),
+      moreButton('canceled', notRun.length),
+      counts.ran > 0 && el('h4', {}, `Marked canceled but ran (${counts.ran})`),
+      counts.ran > 0 && el('p', { className: 'status' }, `GPS saw a bus run ${counts.ran} of the ${counts.trips} trips marked canceled, at least partly. Each says how much of its trip was run. (Feed tab: "Canceled but ran anyway".)`),
+      counts.ran > 0 && !ranOpen && showRan,
+      ...(ranOpen ? ranShown.slice(0, shown.canceledRan).map(row) : []),
+      ranOpen && moreButton('canceledRan', ranShown.length),
     ];
   }
 
