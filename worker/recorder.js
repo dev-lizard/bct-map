@@ -37,13 +37,15 @@ import { SegmentLog } from '../server/segments.mjs';
 import { TrackLog, trackKey } from '../server/tracks.mjs';
 import { findHubs, ServiceLog } from '../server/service.mjs';
 import { dateRange } from '../server/range.mjs';
-import { addDelay, emptyCount, summarize, timepointDepartures } from '../server/ontime.mjs';
+import { addDelay, emptyCount, mergeCount, summarize, timepointDepartures } from '../server/ontime.mjs';
 
 const TIMEZONE = 'America/New_York';
 const KEEP_DAYS = 30; // service days of counts kept
 const SEEN_DAYS = 3; // service days of "already recorded" memory kept
 const MANIFEST_CHECK_MS = 10 * 60_000;
 const SEGMENTS_KEEP_DAYS = 31;
+// On-time counts in ontime_days rows, in this order.
+const ONTIME_FIELDS = ['n', 'early', 'late', 'sumDelay', 'veryLate', 'sumLate'];
 const RECENT_DAYS = 2; // days back a wake-up reads the per-day logs for; summaries read more when asked
 
 const gzip = async text => new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
@@ -184,10 +186,7 @@ export class Recorder extends DurableObject {
       const key = `${date}|${c.hour}`;
       if (!hours.has(key)) hours.set(key, { date, hour: c.hour, ...emptyCount() });
       const h = hours.get(key);
-      h.n += c.n;
-      h.early += c.early;
-      h.late += c.late;
-      h.sumDelay += c.sumDelay;
+      mergeCount(h, c);
     }
     return {
       windowDays: range.days,
@@ -270,12 +269,11 @@ export class Recorder extends DurableObject {
       for (const d of timepointDepartures(passages, schedule.trips, { timezone: TIMEZONE, seen: date => this.#seenFor(date) })) {
         if (!this.#exec('INSERT OR IGNORE INTO seen (date, key) VALUES (?, ?)', d.date, `${d.tripId}|${d.seq}`).written) continue;
         const day = this.#ontimeDay(d.date);
-        const count = (day[`${d.routeId}|${d.hour}`] ??= [0, 0, 0, 0]);
+        // [n, early, late, sum of delays, very late, sum of late delays] (days saved before Oct 29
+        // have only the first four).
+        const count = (day[`${d.routeId}|${d.hour}`] ??= [0, 0, 0, 0, 0, 0]);
         const c = addDelay(emptyCount(), d.delay);
-        count[0] += c.n;
-        count[1] += c.early;
-        count[2] += c.late;
-        count[3] += c.sumDelay;
+        ONTIME_FIELDS.forEach((k, i) => { count[i] = (count[i] ?? 0) + c[k]; });
         this.#ontimeDirty.add(d.date);
         recorded++;
         first = Math.min(first ?? d.time, d.time);
@@ -300,9 +298,9 @@ export class Recorder extends DurableObject {
     for (const { date, data } of this.#exec('SELECT date, data FROM ontime_days WHERE date >= ? AND date <= ?', from, to).rows) {
       // Today's may have changes not saved yet.
       const day = this.#ontime.get(date) ?? JSON.parse(data);
-      for (const [key, [n, early, late, sumDelay]] of Object.entries(day)) {
+      for (const [key, values] of Object.entries(day)) {
         const [routeId, hour] = key.split('|');
-        out.push({ date, routeId, hour: Number(hour), n, early, late, sumDelay });
+        out.push({ date, routeId, hour: Number(hour), ...Object.fromEntries(ONTIME_FIELDS.map((k, i) => [k, values[i] ?? 0])) });
       }
     }
     return out;

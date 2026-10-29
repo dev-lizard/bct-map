@@ -27,8 +27,10 @@ const MAX_OFF_ROUTE_M = 250; // a report further than this from the trip's stops
 const MAX_GAP_S = 300; // reports further apart than this aren't joined up
 const MAX_RUN_S = 30 * 60;
 const MAX_SPEED_MPS = 31; // 70 mph: faster means a bad fix
-// A bus waits at its first stop, so it counts as gone once it's this far past it.
-const ORIGIN_DEPARTED_M = 25;
+// A bus counts as having left a stop once it's this far past it (or halfway to the next stop, if
+// that's closer): riders experience a departure, and a bus that arrives early and waits hasn't
+// left early. The last stop is timed on arrival, since there's no departure from it.
+const DEPARTED_M = 25;
 const M_PER_DEG_LAT = 110_540;
 
 // stops: Map of stop id -> { lat, lon }. Returns the trip's stops as a line in local metres with
@@ -80,8 +82,9 @@ export class SegmentLog {
   }
 
   // vehicleFeed: a decoded vehicle-positions feed. trips: the timetable's trips. stops: Map of stop
-  // id -> { lat, lon }. onPass({ tripId, seq, time, startDate }) is called for every stop a bus is
-  // seen to pass (the on-time stats use the timepoints). Returns how many stop-to-stop runs were
+  // id -> { lat, lon }. onPass({ tripId, seq, time, arrivedAt, startDate }) is called for every stop
+  // a bus is seen to leave (time), or for the last stop, reach. arrivedAt: when it reached the stop,
+  // if seen (null otherwise); predictions of arrival are graded against it. Returns how many stop-to-stop runs were
   // recorded.
   observe(vehicleFeed, { trips, stops, onPass = null }) {
     let recorded = 0;
@@ -102,17 +105,23 @@ export class SegmentLog {
       if (sameTrip && ts <= prev.ts) continue; // the same report again
       const here = project(line, v.position.latitude, v.position.longitude, sameTrip ? prev.seg - 1 : 0);
       if (!here) continue;
-      const state = { tripId, ts, along: here.along, seg: here.seg, passed: sameTrip ? prev.passed : null };
+      const state = { tripId, ts, along: here.along, seg: here.seg, passed: sameTrip ? prev.passed : null, arrived: sameTrip ? prev.arrived ?? null : null };
       if (sameTrip && ts - prev.ts <= MAX_GAP_S && here.along > prev.along) {
-        // Every stop between the two reports, with the time the bus passed it.
+        // Every stop between the two reports, with the time the bus left it (reached it, for the last).
+        const last = line.along.length - 1;
+        const timeAt = m => prev.ts + ((m - prev.along) / (here.along - prev.along)) * (ts - prev.ts);
+        for (let i = 1; i < line.along.length; i++) {
+          if (line.along[i] > prev.along && line.along[i] <= here.along) state.arrived = { index: i, time: timeAt(line.along[i]) };
+        }
         for (let i = 0; i < line.along.length; i++) {
-          const at = i === 0 ? Math.min(ORIGIN_DEPARTED_M, line.along[1] / 2) : line.along[i];
+          const at = i === last ? line.along[i] : Math.min(line.along[i] + DEPARTED_M, (line.along[i] + line.along[i + 1]) / 2);
           if (at <= prev.along || at > here.along) continue;
-          if (here.pastEnd && i === line.along.length - 1) break;
-          const time = prev.ts + ((at - prev.along) / (here.along - prev.along)) * (ts - prev.ts);
+          if (here.pastEnd && i === last) break;
+          const time = timeAt(at);
           if (state.passed?.index === i - 1) recorded += this.#add(trip, i - 1, time - state.passed.time, line.along[i] - line.along[i - 1], state.passed.time);
           state.passed = { index: i, time };
-          onPass?.({ tripId, seq: trip.s[i][0], time, startDate: v.trip.startDate || null });
+          const arrivedAt = i === last ? time : state.arrived?.index === i ? state.arrived.time : null;
+          onPass?.({ tripId, seq: trip.s[i][0], time, arrivedAt, startDate: v.trip.startDate || null });
         }
       } else if (!sameTrip || ts - prev.ts > MAX_GAP_S) {
         state.passed = null; // a new trip or a long gap: start again from the next stop

@@ -259,7 +259,7 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Oct 29, 2026 (canceled trips split)</span>
+    <span class="updated">Matches the app as of Oct 29, 2026 (BCT on-time rule, rider measures)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -367,7 +367,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <div class="m-sub"><span class="n sm">5</span>Ran only partly (61)</div>
           <div class="event"><span class="when">4:10 PM</span><span class="badge" style="background:#0079C1">14</span><span class="what">Central Terminal Via Tri-Rail <span class="m-note">· last 22 min not run</span></span></div>
           <div class="m-sub"><span class="n sm">6</span>Missed without notice (43)</div>
-          <div class="event"><span class="when">2:03 PM</span><span class="badge" style="background:#B95915">72</span><span class="what">Oakland Park Blvd <span class="late">· no bus seen, not announced</span></span></div>
+          <div class="event"><span class="when">2:03 PM</span><span class="badge" style="background:#B95915">72</span><span class="what">Oakland Park Blvd <span class="late">· no bus seen, not announced; riders waited +30 min for the next bus</span></span></div>
           <div class="m-sub"><span class="n sm">7</span>Canceled trips (274)</div>
           <div class="m-sub"><span class="n sm">8</span>Not run (13)</div>
           <div class="event"><span class="when">9:24 AM</span><span class="badge" style="background:#0079C1">14</span><span class="what">Central Terminal Via Tri-Rail <span class="late">· no bus seen</span></span></div>
@@ -381,10 +381,10 @@ table.m tr.hl td { background: var(--m-hover); }
         <ol>
           <li><span class="n">4</span><div><strong>By route.</strong> The same groups for each route, worst first. Click a row to narrow every tab to that route.</div></li>
           <li><span class="n">5</span><div><strong>Ran only partly.</strong> Each partial trip, and which end wasn't run ("first 18 min not run", "last 22 min not run"). Click one to open its timetable.</div></li>
-          <li><span class="n">6</span><div><strong>Missed without notice.</strong> Trips that never ran and were never announced. These are the ones riders waited for in vain.</div></li>
+          <li><span class="n">6</span><div><strong>Missed without notice.</strong> Trips that never ran and were never announced. These are the ones riders waited for in vain; each says how much longer they waited for the next bus that did run.</div></li>
           <li><span class="n">7</span><div><strong>Canceled trips:</strong> every trip BCT's feed marked canceled at some point. Most were run anyway: BCT often flags late-running trips as canceled, sometimes for only a few minutes. So the list is split in two.</div></li>
           <li><span class="n">8</span><div><strong>Not run:</strong> marked canceled, and GPS never saw a bus on them. These are the cancellations riders really faced, listed first. Each says what's known: no bus seen, a bus stayed assigned, or BCT put it back on the schedule. "Still within its run" means the trip's timetabled time isn't over, so it may yet run.</div></li>
-          <li><span class="n">9</span><div><strong>Marked canceled but ran:</strong> a count, with the list folded away behind "Show these trips". Each says how much of the trip a bus served ("ran anyway: 96% of the trip", or "partly run: 21%"), with "so far" while it's still running. The Feed tab counts these as a data problem.</div></li>
+          <li><span class="n">9</span><div><strong>Marked canceled but ran:</strong> riders checking BCT's real-time information were told these trips were canceled, yet a bus came. Anyone who trusted the cancellation may have let the bus go or waited for a later one, so they're counted as something riders faced, with the list folded away behind "Show these trips". Each says how much of the trip a bus served ("ran anyway: 96% of the trip", or "partly run: 21%"), with "so far" while it's still running.</div></li>
         </ol>
         <p class="muted">Click any trip for its full story. The CSV includes both kinds.</p>
       </div>
@@ -414,6 +414,29 @@ table.m tr.hl td { background: var(--m-hover); }
         <p class="callout">On Oct 29, BCT marked 274 trips canceled at some point, and GPS saw a bus run 255 of them. Only about a dozen were really not run.</p>
       </div>
     </div>
+
+    <div class="pair">
+      <figure class="figure">
+        <span class="example">Example numbers</span>
+        <div class="mock">
+          <div class="kv"><span class="kv-label"><span class="n sm">10</span>Stops served</span><strong>92.4%</strong><span class="s">of 140,445 stop visits promised</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">11</span>Extra wait from trips not run</span><strong>+50.9 min</strong><span class="s">on average, 63 trips; 53.4 hours in all</span></div>
+          <div class="m-sub">By route (two more columns)</div>
+          <div class="tablewrap"><table class="m">
+            <thead><tr><th>Route</th><th class="num">In full</th><th class="num">Stops served</th><th class="num">Extra wait</th></tr></thead>
+            <tbody><tr><td><span class="badge" style="background:#0079C1">14</span></td><td class="num">86.0%</td><td class="num">88.2%</td><td class="num">+40 min</td></tr></tbody>
+          </table></div>
+        </div>
+      </figure>
+      <div class="words">
+        <p>Two figures under the headline put service in riders' terms:</p>
+        <ol>
+          <li><span class="n">10</span><div><strong>Stops served:</strong> every trip promises a stop visit at each of its stops. This is the share of those visits a bus actually made, over the trips that could be judged. A trip cut short counts the stops it reached, so the riders waiting further along count as missed.</div></li>
+          <li><span class="n">11</span><div><strong>Extra wait from trips not run:</strong> for each trip missed or canceled, how long riders waited for the next bus on the same route and direction that did run. Shown as an average and a total. It isn't counted when the recorder couldn't see the trips in between, or when nothing later that day ran.</div></li>
+        </ol>
+        <p class="muted">Both are also columns in the by-route table and the CSV.</p>
+      </div>
+    </div>
   </section>
 
   <!-- ===================================================== ON TIME -->
@@ -421,12 +444,12 @@ table.m tr.hl td { background: var(--m-hover); }
     <div class="chapter-head">
       <span class="tabname"><span class="tabpill">On time</span></span>
       <h2>Do buses leave their stops on time?</h2>
-      <p>Measured the way US transit agencies do it: at each timepoint (the main stops with a time printed in the timetable), how early or late the bus left.</p>
+      <p>Measured the way BCT reports it: at each timepoint (the main stops with a time printed in the timetable), how early or late the bus <em>left</em>, compared with the timetable.</p>
     </div>
     <div class="pair">
       <figure class="figure">
         <div class="mock svgwrap">
-          <svg viewBox="0 0 560 130" role="img" aria-label="A number line: more than 1 minute early is early, 1 minute early to 5 minutes late is on time, more than 5 minutes late is late.">
+          <svg viewBox="0 0 560 130" role="img" aria-label="A number line: 1 minute or more early is early, 5 minutes or more late is late, anything in between is on time.">
             <rect x="20" y="40" width="110" height="26" class="s-early"/>
             <rect x="130" y="40" width="300" height="26" class="s-ok"/>
             <rect x="430" y="40" width="110" height="26" class="s-late"/>
@@ -436,19 +459,19 @@ table.m tr.hl td { background: var(--m-hover); }
             <line x1="180" y1="32" x2="180" y2="74" class="st-ink" stroke-width="2"/>
             <text x="180" y="24" text-anchor="middle" class="s-ink" font-size="12">timetable</text>
             <g class="s-ink" font-size="12" text-anchor="middle">
-              <text x="130" y="92">1 min early</text><text x="430" y="92">5 min late</text>
+              <text x="130" y="92">1:00 early or more</text><text x="430" y="92">5:00 late or more</text>
             </g>
-            <text x="20" y="120" class="s-muted" font-size="11">A bus that leaves 1 minute early is gone before riders who arrive on time; that's why early counts as a miss.</text>
+            <text x="20" y="120" class="s-muted" font-size="11">4:59 late is on time; 5:00 late is late. 0:59 early is on time; 1:00 early is early.</text>
           </svg>
         </div>
       </figure>
       <div class="words">
         <ul class="plain">
-          <li><div><strong>On time:</strong> no more than 1 minute early and no more than 5 minutes late.</div></li>
-          <li><div><strong>Early:</strong> more than 1 minute early. Worse than it sounds: riders who come on time miss the bus.</div></li>
-          <li><div><strong>Late:</strong> more than 5 minutes late.</div></li>
+          <li><div><strong>Early:</strong> left 1 minute or more before the timetable. Worse than it sounds: riders who come on time miss the bus.</div></li>
+          <li><div><strong>Late:</strong> left 5 minutes or more after the timetable.</div></li>
+          <li><div><strong>On time:</strong> anything in between. This is BCT's own departure-based rule, so these numbers line up with its official on-time reports.</div></li>
         </ul>
-        <p class="muted">The time comes from GPS: the moment the bus is seen passing the stop, or pulling away from its first stop.</p>
+        <p class="muted">The time comes from GPS: the moment the bus pulls away, once it's 25 m past the stop. A bus that arrives early and waits for its time isn't counted early. The last stop of a trip has no departure, so it isn't counted here (see "Reached the end on time" below).</p>
       </div>
     </div>
     <div class="pair">
@@ -456,18 +479,28 @@ table.m tr.hl td { background: var(--m-hover); }
         <span class="example">Example numbers</span>
         <div class="mock">
           <div class="m-head"><h4>On time</h4><span class="m-btn">CSV</span></div>
-          <div class="with-n"><span class="n">1</span><div class="srow"><strong class="lbl">All</strong><span class="sbar"><span class="c-early" style="flex:17"></span><span class="c-ok" style="flex:61"></span><span class="c-late" style="flex:22"></span></span><strong class="pct">61%</strong></div></div>
+          <div class="with-n"><span class="n">1</span><div class="srow"><strong class="lbl">All</strong><span class="sbar"><span class="c-early" style="flex:17"></span><span class="c-ok" style="flex:61"></span><span class="c-late" style="flex:22"></span></span><strong class="pct">61.6%</strong></div></div>
           <div class="legend"><span><span class="sw c-early"></span>Early</span><span><span class="sw c-ok"></span>On time</span><span><span class="sw c-late"></span>Late</span><span>* under 20 departures</span></div>
-          <div class="m-sub"><span class="n sm">2</span>By route (click for its hours)</div>
-          <div class="srow"><span class="lbl"><span class="badge" style="background:#B95915">72</span></span><span class="sbar"><span class="c-early" style="flex:8"></span><span class="c-ok" style="flex:76"></span><span class="c-late" style="flex:16"></span></span><span class="pct">76%</span></div>
-          <div class="srow"><span class="lbl"><span class="badge" style="background:#F16477">18</span></span><span class="sbar"><span class="c-early" style="flex:21"></span><span class="c-ok" style="flex:52"></span><span class="c-late" style="flex:27"></span></span><span class="pct">52%</span></div>
-          <div class="srow"><span class="lbl"><span class="badge" style="background:#6C84C2">19</span></span><span class="sbar"><span class="c-early" style="flex:25"></span><span class="c-ok" style="flex:60"></span><span class="c-late" style="flex:15"></span></span><span class="pct">60%*</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">2</span>More than 10 min late</span><strong>6.9%</strong><span class="s">late buses averaged +10.1 min</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">3</span>Left any stop early</span><strong>27.9%</strong><span class="s">of 258 departures, at every stop</span></div>
+          <div class="kv"><span class="kv-label"><span class="n sm">4</span>Reached the end on time</span><strong>71.0%</strong><span class="s">less than 5 min late, of 410 trips; 9.5% over 10 min late</span></div>
+          <div class="m-sub"><span class="n sm">5</span>By hour of departure, all routes</div>
+          <div class="srow"><span class="lbl">8 AM</span><span class="sbar"><span class="c-early" style="flex:20"></span><span class="c-ok" style="flex:52"></span><span class="c-late" style="flex:28"></span></span><span class="pct">52.5%</span></div>
+          <div class="srow"><span class="lbl">11 AM</span><span class="sbar"><span class="c-early" style="flex:14"></span><span class="c-ok" style="flex:74"></span><span class="c-late" style="flex:12"></span></span><span class="pct">74.3%</span></div>
+          <div class="srow"><span class="lbl">4 PM</span><span class="sbar"><span class="c-early" style="flex:13"></span><span class="c-ok" style="flex:57"></span><span class="c-late" style="flex:30"></span></span><span class="pct">57.5%</span></div>
+          <div class="m-sub"><span class="n sm">6</span>By route, with its worst hour</div>
+          <div class="srow" style="grid-template-columns:52px minmax(0,1fr) 50px 76px"><span class="lbl"><span class="badge" style="background:#F16477">18</span></span><span class="sbar"><span class="c-early" style="flex:12"></span><span class="c-ok" style="flex:69"></span><span class="c-late" style="flex:19"></span></span><span class="pct">69.2%</span><span class="m-note" style="text-align:right">4 PM 51.4%</span></div>
+          <div class="srow" style="grid-template-columns:52px minmax(0,1fr) 50px 76px"><span class="lbl"><span class="badge" style="background:#B95915">72</span></span><span class="sbar"><span class="c-early" style="flex:15"></span><span class="c-ok" style="flex:67"></span><span class="c-late" style="flex:18"></span></span><span class="pct">67.3%</span><span class="m-note" style="text-align:right">1 PM 39.1%</span></div>
         </div>
       </figure>
       <div class="words">
         <ol>
           <li><span class="n">1</span><div><strong>All:</strong> every timed departure in the period, split into early, on time and late. The number on the right is the on-time share.</div></li>
-          <li><span class="n">2</span><div><strong>By route:</strong> the same bar for each route. Click a route to see its <strong>hours</strong>: the same bars for each hour of the day, which shows when that route struggles (often the afternoon rush).</div></li>
+          <li><span class="n">2</span><div><strong>More than 10 minutes late:</strong> to a rider, 6 minutes late and 25 minutes late are very different, but both are just "late". This shows how many were very late, and how late the late buses were on average. (Counted from Oct 29 on, so a period reaching back earlier reads low.)</div></li>
+          <li><span class="n">3</span><div><strong>Left any stop early:</strong> riders board at every stop, not just timepoints. This counts buses that left <em>any</em> stop 1 minute or more before its scheduled time, leaving people behind. Times at ordinary stops are BCT's timetable estimates between timepoints, the ones riders see in trip planners, so this reads higher than timepoint figures.</div></li>
+          <li><span class="n">4</span><div><strong>Reached the end on time:</strong> riders going to work or a connection care when they arrive. This is the share of trips that reached their last stop less than 5 minutes late (arriving early is fine for someone on board).</div></li>
+          <li><span class="n">5</span><div><strong>By hour:</strong> what riders experience depends on when they ride, so the hours come first, for all routes or the one picked.</div></li>
+          <li><span class="n">6</span><div><strong>By route:</strong> each route's bar, and on the right its <strong>worst hour</strong> (with at least 20 departures), so the rider who has it worst isn't hidden in the day's average. Click a route for all its hours.</div></li>
         </ol>
         <p class="callout">A route with a big yellow slice runs early too often: its timetable may be too loose, or drivers may be leaving early.</p>
       </div>
@@ -503,7 +536,7 @@ table.m tr.hl td { background: var(--m-hover); }
         </div>
       </figure>
       <div class="words">
-        <p>For each bus and each timepoint ahead of it, the app saves BCT's guess once in each of five windows: <strong>20–30, 10–20, 5–10, 2–5 and 0–2 minutes</strong> before the bus is due. When GPS sees the bus pass, each saved guess is graded:</p>
+        <p>For each bus and each timepoint ahead of it, the app saves BCT's guess once in each of five windows: <strong>20–30, 10–20, 5–10, 2–5 and 0–2 minutes</strong> before the bus is due. When GPS sees the bus reach the stop (its arrival, since BCT predicts arrivals), each saved guess is graded:</p>
         <ul class="plain">
           <li><div><strong>Accurate:</strong> the bus came no more than 1 minute before the guess, or 3 minutes after.</div></li>
           <li><div><strong>Bus came early:</strong> more than 1 minute before the guess. The worst case, because someone trusting the countdown misses the bus.</div></li>

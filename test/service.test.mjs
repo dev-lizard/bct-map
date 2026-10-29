@@ -24,7 +24,7 @@ test('service delivered: operated, canceled, missed, and unknown when the record
   const log = new ServiceLog({ timezone: TZ });
   recordMorning(log);
   let s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
-  assert.deepEqual(s.delivered.byDate[0], { date: '20261022', scheduled: 3, operated: 2, partial: 0, canceled: 0, missed: 1, unknown: 0 });
+  assert.deepEqual(s.delivered.byDate[0], { date: '20261022', scheduled: 3, operated: 2, partial: 0, canceled: 0, missed: 1, unknown: 0, stops: 9, stopsServed: 6, waitN: 0, waitS: 0 });
   assert.deepEqual(s.delivered.missed.map(m => m.tripId), ['T3']);
   s = log.summary({ days: 1, schedule, canceled: new Set(['20261022|T3']), nowS: day + 12 * H });
   assert.equal(s.delivered.byDate[0].canceled, 1);
@@ -153,5 +153,19 @@ test('service delivered: day-by-day counts for each route too', () => {
   const log = new ServiceLog({ timezone: TZ });
   recordMorning(log);
   const { byRouteDate } = log.summary({ days: 1, schedule, nowS: day + 12 * H }).delivered;
-  assert.deepEqual(byRouteDate.R1, [{ date: '20261022', scheduled: 3, operated: 2, partial: 0, canceled: 0, missed: 1, unknown: 0 }]);
+  assert.deepEqual(byRouteDate.R1, [{ date: '20261022', scheduled: 3, operated: 2, partial: 0, canceled: 0, missed: 1, unknown: 0, stops: 9, stopsServed: 6, waitN: 0, waitS: 0 }]);
+});
+
+test('riders: extra wait after a trip not run, early at any stop, and on time at the end', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  // T1 (8:00) never shows; T2 (8:10) and T3 (8:20) run. Riders for T1 wait 10 min for T2.
+  for (let t = day + 7.5 * H; t <= day + 9.5 * H; t += 60) log.observe({ vehicles: vehicles(t, t < day + 8.6 * H ? ['T2', 'T3'] : []), trips, nowS: t });
+  // T2 leaves B 2 min early (an ordinary stop) and reaches C, its last stop, 6 min late.
+  log.observe({ passages: [pass('T2', 2, day + 8 * H + 780), { ...pass('T2', 3, day + 8 * H + 1560), arrivedAt: day + 8 * H + 1560 }], trips, nowS: day + 8 * H + 1560 });
+  const s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
+  const d = s.delivered.byDate[0];
+  assert.deepEqual([d.missed, d.waitN, d.waitS], [1, 1, 600]);
+  assert.equal(s.delivered.missed[0].extraWaitS, 600);
+  assert.deepEqual(s.anyStop.R1, [1, 1]); // one departure timed (B), early
+  assert.deepEqual(s.arrival.R1, [1, 1, 0, 360]); // one arrival, late, not very late, +6 min
 });

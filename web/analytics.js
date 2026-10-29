@@ -190,7 +190,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     if (s.error) return failed('service data', s.error);
     const d = s.delivered;
     const rows = routeId ? d.byRoute.filter(r => r.routeId === routeId) : d.byRoute;
-    const t = rows.reduce((a, r) => { for (const k of Object.keys(a)) a[k] += r[k] ?? 0; return a; }, { scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 });
+    const t = rows.reduce((a, r) => { for (const k of Object.keys(a)) a[k] += r[k] ?? 0; return a; }, { scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0, stops: 0, stopsServed: 0, waitN: 0, waitS: 0 });
     const judged = t.scheduled - t.unknown;
     const pct = (n, of) => (of ? `${Math.round((1000 * n) / of) / 10}%` : '–');
     const mine = list => (list ?? []).filter(m => !routeId || m.routeId === routeId);
@@ -215,13 +215,15 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     ].filter(Boolean).join(', ');
     return [
       head('Service delivered', csvButton(`broward-service-delivered-${slug()}.csv`, () => [
-        ['route', 'scheduled_trips', 'ran_in_full', 'ran_in_part', 'canceled', 'missed_unannounced', 'not_judged', 'ran_in_full_pct'],
-        ...d.byRoute.map(r => [route(r.routeId).routeShortName, r.scheduled, r.operated, r.partial ?? 0, r.canceled, r.missed, r.unknown, judgedPct(r)]),
+        ['route', 'scheduled_trips', 'ran_in_full', 'ran_in_part', 'canceled', 'missed_unannounced', 'not_judged', 'ran_in_full_pct', 'stop_visits_promised', 'stop_visits_made', 'trips_not_run_with_a_later_bus', 'extra_wait_s_total'],
+        ...d.byRoute.map(r => [route(r.routeId).routeShortName, r.scheduled, r.operated, r.partial ?? 0, r.canceled, r.missed, r.unknown, judgedPct(r), r.stops ?? '', r.stopsServed ?? '', r.waitN ?? '', r.waitS ?? '']),
       ], d.byRoute.length)),
       // Until the recorder has watched some trips from start to finish, a percentage would mislead.
       t.operated + t.partial + t.missed > 0
         ? el('p', { className: 'an-stat' }, el('strong', {}, pct(t.operated, judged)), ` of ${judged.toLocaleString('en-US')} scheduled trips ran in full (${routeText()}, ${periodText()})`)
         : el('p', { className: 'empty' }, 'Not enough recording yet: a trip is judged once the recorder has watched its whole run and it has been over for half an hour.'),
+      t.stops > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Stops served'), el('strong', {}, `${rate(t.stopsServed, t.stops)}%`), el('span', { className: 'status' }, `of ${t.stops.toLocaleString('en-US')} stop visits promised`)),
+      t.waitN > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Extra wait from trips not run'), el('strong', {}, `+${seconds(Math.round(t.waitS / t.waitN))}`), el('span', { className: 'status' }, `on average, ${t.waitN} ${t.waitN === 1 ? 'trip' : 'trips'}; ${t.waitS >= 5400 ? `${Math.round(t.waitS / 360) / 10} hours` : minutesText(t.waitS)} in all`)),
       el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} in full · ${t.partial} only partly · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
       el('p', { className: 'status' }, `A trip ran if a bus was seen on it, in the vehicle feed or by GPS. Only partly: GPS first saw it ${s.rules.partialS / 60}+ minutes into its timetable, or last saw it ${s.rules.partialS / 60}+ minutes before the end; a bus whose GPS failed looks the same (see Feed). Missed without notice: no bus ever showed and BCT never marked it canceled. Only finished trips count.`),
       serviceLegend(),
@@ -232,6 +234,8 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'route', label: 'Route', value: r => route(r.routeId).order ?? 999, render: r => routeBadge(route(r.routeId)) },
         { key: 'delivered', label: 'In full', num: true, value: r => judgedPct(r) ?? 101, render: r => (judgedPct(r) == null ? '–' : `${judgedPct(r)}%`) },
         { key: 'partial', label: 'Partly', num: true, value: r => r.partial ?? 0 },
+        { key: 'stopsServed', label: 'Stops served', num: true, value: r => (r.stops ? r.stopsServed / r.stops : 2), render: r => (r.stops ? `${rate(r.stopsServed, r.stops)}%` : '–') },
+        { key: 'wait', label: 'Extra wait', num: true, value: r => (r.waitN ? r.waitS / r.waitN : -1), render: r => (r.waitN ? `+${seconds(Math.round(r.waitS / r.waitN))}` : '–') },
         { key: 'canceled', label: 'Canceled', num: true, value: r => r.canceled },
         { key: 'missed', label: 'Missed', num: true, value: r => r.missed },
         { key: 'scheduled', label: 'Trips', num: true, value: r => r.scheduled - r.unknown },
@@ -240,7 +244,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ...partial.slice(0, shown.partial ?? SHOW).map(m => tripRow(m, partNote(m), '')),
       moreButton('partial', partial.length),
       missed.length > 0 && el('h4', {}, `Missed without notice (${missed.length})`),
-      ...missed.slice(0, shown.missed ?? SHOW).map(m => tripRow(m, 'no bus seen, not announced', 'cancel-missed')),
+      ...missed.slice(0, shown.missed ?? SHOW).map(m => tripRow(m, `no bus seen, not announced${m.extraWaitS ? `; riders waited +${seconds(m.extraWaitS)} for the next bus` : ''}`, 'cancel-missed')),
       moreButton('missed', missed.length),
       ...cancellations(),
     ];
@@ -317,7 +321,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ...notRun.slice(0, shown.canceled ?? SHOW).map(row),
       moreButton('canceled', notRun.length),
       counts.ran > 0 && el('h4', {}, `Marked canceled but ran (${counts.ran})`),
-      counts.ran > 0 && el('p', { className: 'status' }, `GPS saw a bus run ${counts.ran} of the ${counts.trips} trips marked canceled, at least partly. Each says how much of its trip was run. (Feed tab: "Canceled but ran anyway".)`),
+      counts.ran > 0 && el('p', { className: 'status' }, `Riders checking BCT's real-time information were told these trips were canceled, but GPS saw a bus run ${counts.ran} of the ${counts.trips}, at least partly. Anyone who trusted the cancellation may have let the bus go, or waited for a later one. Each says how much of its trip was run.`),
       counts.ran > 0 && !ranOpen && showRan,
       ...(ranOpen ? ranShown.slice(0, shown.canceledRan).map(row) : []),
       ranOpen && moreButton('canceledRan', ranShown.length),
@@ -341,21 +345,34 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     }
     const d = onTimeCache.data;
     if (d.error) return failed('on-time data', d.error);
-    const intro = el('p', { className: 'status' }, `Departures from timepoints, timed from bus GPS: on time is no more than 1 minute early or 5 minutes late. ${d.samples.toLocaleString('en-US')} ${d.samples === 1 ? 'departure' : 'departures'}, ${routeText()}, ${periodText()}.`);
+    const intro = el('p', { className: 'status' }, `Departures from timepoints, timed from bus GPS as the bus pulls away. BCT's rule: 1 minute or more early is early, 5 minutes or more late is late. ${d.samples.toLocaleString('en-US')} ${d.samples === 1 ? 'departure' : 'departures'}, ${routeText()}, ${periodText()}.`);
     const total = el('div', { className: 'rel-row rel-total' }, el('strong', {}, routeId ? 'All day' : 'All'), stackedBar(d), el('strong', { className: 'rel-pct' }, pct(d)));
     const csv = csvButton(`broward-on-time-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => (routeId
-      ? [['hour', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'mean_delay_s'], ...d.byHour.map(h => [h.hour, h.samples, h.onTimePct, h.earlyPct, h.latePct, h.meanDelayS])]
-      : [['route', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'mean_delay_s'], ...d.routes.map(r => [route(r.routeId).routeShortName, r.samples, r.onTimePct, r.earlyPct, r.latePct, r.meanDelayS])]), d.samples);
+      ? [['hour', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'over_10_min_late_pct', 'mean_delay_s', 'mean_lateness_of_late_s'], ...d.byHour.map(h => [h.hour, h.samples, h.onTimePct, h.earlyPct, h.latePct, h.veryLatePct, h.meanDelayS, h.meanLateS])]
+      : [['route', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'over_10_min_late_pct', 'mean_delay_s', 'mean_lateness_of_late_s', 'worst_hour', 'worst_hour_on_time_pct'], ...d.routes.map(r => [route(r.routeId).routeShortName, r.samples, r.onTimePct, r.earlyPct, r.latePct, r.veryLatePct, r.meanDelayS, r.meanLateS, r.worstHour?.hour ?? '', r.worstHour?.onTimePct ?? ''])]), d.samples);
     if (!d.samples) return [head('On time', csv), intro, el('p', { className: 'empty' }, 'No departures recorded yet.')];
-    const rows = routeId
-      ? d.byHour.map(h => el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, hourText(h.hour)), stackedBar(h), el('span', { className: 'rel-pct' }, pct(h))))
-      : d.routes.map(r => {
-        const b = el('button', { type: 'button', className: 'rel-row' }, routeBadge(route(r.routeId)), stackedBar(r), el('span', { className: 'rel-pct' }, pct(r)));
-        b.title = `Route ${route(r.routeId).routeShortName}: ${r.onTimePct}% on time. Click for its hours.`;
-        b.addEventListener('click', () => setRoute(r.routeId));
-        return b;
-      });
-    return [head('On time', csv), intro, total, legend(), el('h4', {}, routeId ? 'By hour of departure' : 'By route (click for its hours)'), ...rows];
+    const hourRows = (d.byHour ?? []).map(h => el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, hourText(h.hour)), stackedBar(h), el('span', { className: 'rel-pct' }, pct(h))));
+    const routeRows = routeId ? [] : d.routes.map(r => {
+      const worst = r.worstHour ? `${hourText(r.worstHour.hour)} ${r.worstHour.onTimePct}%` : '';
+      const b = el('button', { type: 'button', className: 'rel-row ot-route' }, routeBadge(route(r.routeId)), stackedBar(r), el('span', { className: 'rel-pct' }, pct(r)), el('span', { className: 'status ot-worst' }, worst));
+      b.title = `Route ${route(r.routeId).routeShortName}: ${r.onTimePct}% on time${r.worstHour ? `; worst at ${hourText(r.worstHour.hour)} (${r.worstHour.onTimePct}%)` : ''}. Click for its hours.`;
+      b.addEventListener('click', () => setRoute(r.routeId));
+      return b;
+    });
+    // What riders at every stop and at the end of the line saw (from /api/service).
+    const sv = data.service.error ? null : data.service;
+    const mineOrAll = byRoute => (routeId ? byRoute?.[routeId] : sumArrays(Object.values(byRoute ?? {})));
+    const any = sv && mineOrAll(sv.anyStop);
+    const arr = sv && mineOrAll(sv.arrival);
+    const kv = (label, value, note) => el('div', { className: 'an-kv' }, el('span', {}, label), el('strong', {}, value), el('span', { className: 'status' }, note));
+    return [head('On time', csv), intro, total, legend(),
+      d.latePct != null && kv('More than 10 min late', `${d.veryLatePct}%`, d.meanLateS != null ? `late buses averaged ${signed(d.meanLateS)}` : ''),
+      any?.[0] && Object.assign(kv('Left any stop early', `${rate(any[1], any[0])}%`, `of ${any[0].toLocaleString('en-US')} departures, at every stop`), {
+        title: 'Every stop riders board at, not just timepoints. Times at ordinary stops are BCT\'s timetable estimates between timepoints, as riders see them in trip planners.',
+      }),
+      arr?.[0] && kv('Reached the end on time', `${rate(arr[0] - arr[1], arr[0])}%`, `less than 5 min late, of ${arr[0].toLocaleString('en-US')} trips; ${rate(arr[2], arr[0])}% over 10 min late`),
+      el('h4', {}, routeId ? 'By hour of departure' : 'By hour of departure, all routes'), ...hourRows,
+      !routeId && el('h4', {}, 'By route, with its worst hour (click for its hours)'), ...routeRows];
   }
   const pct = s => (s.samples < FEW ? `${s.onTimePct}%*` : `${s.onTimePct}%`);
 

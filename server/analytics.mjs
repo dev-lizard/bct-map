@@ -8,7 +8,7 @@
 // when first seen. Times come from BCT's trip updates (predicted for stops ahead, actual for stops
 // just passed), so no map geometry is needed.
 import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
-import { addDelay, emptyCount, ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
+import { addDelay, emptyCount, mergeCount, ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
 import { dateRange } from './range.mjs';
 
 export const BUNCHED_MAX_S = 180;
@@ -194,12 +194,7 @@ export function weatherImpact(counts, weather) {
   };
 }
 
-function merge(into, c) {
-  into.n += c.n;
-  into.early += c.early;
-  into.late += c.late;
-  into.sumDelay += c.sumDelay;
-}
+const merge = mergeCount;
 
 function rates({ n, early, late, sumDelay }) {
   if (!n) return { samples: 0, onTimePct: null, earlyPct: null, latePct: null, meanDelayS: null };

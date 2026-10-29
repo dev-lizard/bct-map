@@ -12,7 +12,7 @@ const day = serviceDayStart('20261022', TZ);
 // Timepoints (4th element 1) at sequences 1, 3 and 5; 2 and 4 are ordinary stops.
 const trips = {
   T1: { r: 'R1', s: [[1, 'A', 8 * H, 1], [2, 'B', 8 * H + 300], [3, 'C', 8 * H + 600, 1], [4, 'D', 8 * H + 900], [5, 'E', 8 * H + 1200, 1]] },
-  T2: { r: 'R2', s: [[1, 'A', 9 * H, 1], [2, 'B', 9 * H + 600, 1]] },
+  T2: { r: 'R2', s: [[1, 'A', 9 * H, 1], [2, 'B', 9 * H + 600, 1], [3, 'C', 9 * H + 900, 1]] },
 };
 // Stops a bus was seen to pass (SegmentLog.observe's onPass).
 const passed = (tripId, times, startDate = '20261022') =>
@@ -56,6 +56,27 @@ test('summary: on time is 1 min early to 5 min late; by route and by hour', () =
   assert.deepEqual(r1.byHour.map(h => [h.hour, h.samples, h.onTimePct]), [[8, 2, 50], [9, 2, 50]]);
 
   assert.equal(log.summary({ nowS: nowS + 8 * 86400, days: 7 }).samples, 0); // outside the window
+});
+
+test('BCT rule: 1 min or more early is early, 5 min or more late is late; very late and worst hours', () => {
+  const log = new ReliabilityLog({ timezone: TZ });
+  const at = h => day + h * H;
+  log.samples = [
+    [at(8), 'R1', -60, 8], // early: exactly 1 min
+    [at(8), 'R1', -59, 8], // on time
+    [at(8), 'R1', 299, 8], // on time
+    [at(8), 'R1', 300, 8], // late: exactly 5 min
+    [at(9), 'R1', 700, 9], // late, and more than 10 min
+  ];
+  const s = log.summary({ nowS: at(10) });
+  assert.deepEqual([s.earlyPct, s.onTimePct, s.latePct, s.veryLatePct, s.meanLateS], [20, 40, 40, 20, 500]);
+  assert.deepEqual(s.byHour.map(h => [h.hour, h.samples]), [[8, 4], [9, 1]]); // by hour for all routes too
+  assert.equal(s.routes[0].worstHour, null); // under 20 departures in any hour: none named
+});
+
+test('the last stop of a trip is an arrival, not a departure', () => {
+  const log = new ReliabilityLog({ timezone: TZ });
+  assert.equal(log.observe(passed('T1', { 5: day + 8 * H + 1200 }), trips), 0);
 });
 
 test('departures persist to disk and are not recorded twice after a restart', async () => {

@@ -17,8 +17,14 @@
 //     route would make the timetabled connection to another, given when both buses really came.
 //   - Feed quality: stale and missing GPS reports, buses that vanish mid-trip, and predictions that
 //     are just the timetable.
+//   - What riders at any stop see: buses leaving any stop (not only timepoints) 1 minute or more
+//     early, and buses reaching the end of their trip on time. Riders board at every stop, and the
+//     ones at the end of the line care when they arrive.
+//   - Stops served and extra waiting: of the stop visits the timetable promised on judged trips, how
+//     many a bus made (a partial trip skipped some), and for each trip not run, how long riders
+//     waited for the next bus that did run.
 import { addDays, serviceDayStart, servicesOn, ymdInZone } from '../web/gtfs-util.js';
-import { ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
+import { isEarly, isLate, VERY_LATE_S } from './ontime.mjs';
 import { dateRange } from './range.mjs';
 import { PERIODS } from './segments.mjs';
 
@@ -63,6 +69,7 @@ function newDay() {
   return {
     seen: new Set(), span: {}, coverage: new Array(1440).fill(0), pred: {}, predHour: {}, headway: {}, headwayStop: {}, runtime: {},
     ontime: {}, delayStop: {}, transfers: {}, feed: Object.fromEntries(FEED_KEYS.map(k => [k, 0])), feedRoute: {},
+    anyStop: {}, arrival: {},
   };
 }
 
@@ -220,24 +227,33 @@ export class ServiceLog {
         this.#pending.delete(`${p.tripId}|${p.seq}`);
         const day = this.#day(calendarDate);
         for (const [b, predicted] of Object.entries(pending.b)) {
-          const err = time - predicted;
+          const err = Math.round(p.arrivedAt ?? p.time) - predicted; // predictions are of arrival
           const stats = [1, Math.abs(err), err >= PREDICTION_EARLY_S && err <= PREDICTION_LATE_S ? 1 : 0, err < PREDICTION_EARLY_S ? 1 : 0, err > PREDICTION_LATE_S ? 1 : 0];
           add(((day.pred[trip.r] ??= {})[b] ??= []), stats);
           add(((day.predHour[hour] ??= {})[b] ??= []), stats);
         }
       }
       if (!row || row[2] == null) continue;
+      const lastStop = index === trip.s.length - 1;
 
-      // Transfers, at any stop of a hub.
+      // Early at any stop (departures), and on time at the end of the trip (arrival).
+      const stopDelay = time - (dayStart + row[2]);
+      if (Math.abs(stopDelay) <= MAX_PLAUSIBLE_DELAY_S) {
+        const day = this.#day(calendarDate);
+        if (!lastStop) add((day.anyStop[trip.r] ??= []), [1, isEarly(stopDelay) ? 1 : 0]);
+        else add((day.arrival[trip.r] ??= []), [1, isLate(stopDelay) ? 1 : 0, stopDelay > VERY_LATE_S ? 1 : 0, stopDelay]);
+      }
+
+      // Transfers, at any stop of a hub: riders get off when the bus arrives, and on before it leaves.
       const hub = this.#hubOf.get(row[1]);
-      if (hub) this.#atHub(hub, { t: p.tripId, r: trip.r, d: trip.d, sched: dayStart + row[2], at: time, date: serviceDate, arrives: index > 0, departs: index < trip.s.length - 1 }, calendarDate);
+      if (hub) this.#atHub(hub, { t: p.tripId, r: trip.r, d: trip.d, sched: dayStart + row[2], at: time, arr: Math.round(p.arrivedAt ?? time), date: serviceDate, arrives: index > 0, departs: !lastStop }, calendarDate);
       if (row[3] !== 1) continue;
 
       // Delay at this timepoint: on-time counts by route, and by stop for where delay builds up.
       const delay = time - (dayStart + row[2]);
       if (Math.abs(delay) <= MAX_PLAUSIBLE_DELAY_S) {
         const day = this.#day(calendarDate);
-        add((day.ontime[trip.r] ??= []), [1, delay < ON_TIME_EARLY_S ? 1 : 0, delay > ON_TIME_LATE_S ? 1 : 0, delay]);
+        add((day.ontime[trip.r] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0, delay]);
         const firstSecs = trip.s.find(r => r[2] != null)[2];
         add((day.delayStop[`${trip.r}|${trip.d}|${row[1]}`] ??= []), [1, delay, row[2] - firstSecs]);
       }
@@ -310,10 +326,11 @@ export class ServiceLog {
     const list = this.#departuresAt(hub, from.date)?.get(`${to.r}|${to.d}`);
     const i = list?.findIndex(([t]) => t >= from.sched + MIN_TRANSFER_S) ?? -1;
     if (i < 0 || list[i][1] !== to.t || list[i][0] > from.sched + MAX_CONNECTION_WAIT_S) return;
-    const made = to.at >= from.at + MIN_TRANSFER_S;
+    const arrived = from.arr ?? from.at;
+    const made = to.at >= arrived + MIN_TRANSFER_S;
     const extra = !made && list[i + 1] ? list[i + 1][0] - list[i][0] : 0;
     const day = this.#day(calendarDate);
-    add(((day.transfers[hub.id] ??= {})[`${from.r}>${to.r}`] ??= []), [1, made ? 1 : 0, made ? to.at - from.at : 0, extra, !made && extra ? 1 : 0]);
+    add(((day.transfers[hub.id] ??= {})[`${from.r}>${to.r}`] ??= []), [1, made ? 1 : 0, made ? to.at - arrived : 0, extra, !made && extra ? 1 : 0]);
   }
 
   #departuresAt(hub, date) {
@@ -399,6 +416,8 @@ export class ServiceLog {
       headways: this.#headways(dates),
       runtime: this.#runtime(dates),
       delays: this.#sum(dates, 'delayStop'), // "route|dir|stop" -> [n, Σ delay, Σ timetabled seconds from the trip's start]
+      anyStop: this.#sum(dates, 'anyStop'), // route -> [departures from any stop but the last, early]
+      arrival: this.#sum(dates, 'arrival'), // route -> [trips timed at their last stop, late, very late, Σ delay]
       transfers: { hubs: this.#hubs.map(({ id, name, stops }) => ({ id, name, stops })), byHub: this.#transfers(dates) },
       feed: { byDate: dates.map(date => ({ date, ...(this.#days.get(date)?.feed ?? {}) })), byRoute: this.#sum(dates, 'feedRoute') },
       daily: this.#daily(dates, delivered.byDate),
@@ -438,8 +457,12 @@ export class ServiceLog {
     };
   }
 
+  // Every finished trip on each date: ran in full, partly, canceled, missed without notice, or not
+  // judged (recorder not running). Also the stop visits it promised and made, and for a trip not
+  // run, how long until the next bus on its route and direction that did run.
   #delivered(dates, { trips, calendar, exceptions }, canceled, nowS) {
     const covered = this.#coverageIndex(dates);
+    const newCounts = () => ({ scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0, stops: 0, stopsServed: 0, waitN: 0, waitS: 0 });
     const byRoute = new Map();
     const byDate = [];
     const byRouteDate = {}; // route -> [counts by date], for one route's day-by-day bars
@@ -450,7 +473,13 @@ export class ServiceLog {
       const dayStart = serviceDayStart(date, this.timezone);
       const seen = this.#days.get(date)?.seen ?? new Set();
       const spans = this.#days.get(date)?.span ?? {};
-      const counts = { date, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 };
+      const counts = { date, ...newCounts() };
+      const entries = [];
+      const routeCounts = routeId => {
+        const days = (byRouteDate[routeId] ??= []);
+        if (days.at(-1)?.date !== date) days.push({ date, ...newCounts() });
+        return [counts, byRoute.get(routeId) ?? byRoute.set(routeId, { routeId, ...newCounts() }).get(routeId), days.at(-1)];
+      };
       for (const [tripId, trip] of Object.entries(trips)) {
         if (!running.has(trip.sv)) continue;
         const timed = trip.s.filter(r => r[2] != null);
@@ -460,6 +489,7 @@ export class ServiceLog {
         if (end + 1800 > nowS) continue; // not over yet
         let status;
         let part = null;
+        let served = 0;
         if (seen.has(tripId)) {
           // Seen only in the vehicle feed (no stops passed), or with gaps in recording: counted as run.
           const span = spans[tripId];
@@ -468,27 +498,53 @@ export class ServiceLog {
           if ((late >= PARTIAL_S || early >= PARTIAL_S) && covered(start - 600, end + 600) >= COVERAGE_MIN) {
             status = 'partial';
             part = { notRunStartS: late, notRunEndS: early, fromStop: timed.find(r => r[2] === span[0])?.[1] ?? null, toStop: timed.findLast(r => r[2] === span[1])?.[1] ?? null };
-          } else status = 'operated';
+            served = trip.s.filter(r => r[2] != null && r[2] >= span[0] && r[2] <= span[1]).length;
+          } else {
+            status = 'operated';
+            served = trip.s.length;
+          }
         } else if (canceled.has(`${date}|${tripId}`)) status = 'canceled';
         else if (covered(start - 600, end + 600) >= COVERAGE_MIN) status = 'missed';
         else status = 'unknown';
-        counts.scheduled++;
-        counts[status]++;
-        const r = byRoute.get(trip.r) ?? byRoute.set(trip.r, { routeId: trip.r, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 }).get(trip.r);
-        r.scheduled++;
-        r[status]++;
-        const days = (byRouteDate[trip.r] ??= []);
-        if (days.at(-1)?.date !== date) days.push({ date, scheduled: 0, operated: 0, partial: 0, canceled: 0, missed: 0, unknown: 0 });
-        days.at(-1).scheduled++;
-        days.at(-1)[status]++;
-        if (status === 'missed') missed.push({ date, tripId, routeId: trip.r, start });
+        for (const c of routeCounts(trip.r)) {
+          c.scheduled++;
+          c[status]++;
+          if (status !== 'unknown') {
+            c.stops += trip.s.length;
+            c.stopsServed += served;
+          }
+        }
+        const entry = { tripId, trip, start, status };
+        entries.push(entry);
+        if (status === 'missed') missed.push((entry.item = { date, tripId, routeId: trip.r, start }));
         if (part) partial.push({ date, tripId, routeId: trip.r, start, ...part });
+      }
+      // Extra waiting: for each trip not run, the time until the next one on its route and direction
+      // that did run. Not counted when a trip in between can't be judged (the recorder wasn't
+      // running), or when nothing later that day ran.
+      const lines = new Map();
+      for (const e of entries) (lines.get(`${e.trip.r}|${e.trip.d}`) ?? lines.set(`${e.trip.r}|${e.trip.d}`, []).get(`${e.trip.r}|${e.trip.d}`)).push(e);
+      for (const list of lines.values()) {
+        list.sort((a, b) => a.start - b.start);
+        list.forEach((e, i) => {
+          if (e.status !== 'missed' && e.status !== 'canceled') return;
+          const next = list.slice(i + 1).find(x => x.status === 'operated' || x.status === 'partial' || x.status === 'unknown');
+          if (!next || next.status === 'unknown') return;
+          const wait = next.start - e.start;
+          if (e.item) e.item.extraWaitS = wait;
+          for (const c of routeCounts(e.trip.r)) {
+            c.waitN++;
+            c.waitS += wait;
+          }
+        });
       }
       byDate.push(counts);
     }
     missed.sort((a, b) => b.start - a.start);
     partial.sort((a, b) => b.start - a.start);
     // operated: ran in full (or as far as anyone can tell). partial: GPS saw only part of it run.
+    // stops / stopsServed: stop visits promised and made on judged trips. waitN / waitS: trips not run
+    // with a later bus, and the time riders waited for it.
     return { byRoute: [...byRoute.values()], byDate, byRouteDate, missed: missed.slice(0, MAX_LIST), partial: partial.slice(0, MAX_LIST) };
   }
 

@@ -1524,9 +1524,11 @@ button.rel-row:hover {
   margin-top: 6px;
 }
 
+/* Label, value, note: the label keeps room for a few words; a long note wraps instead. */
 .an-kv {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(7.5em, 1fr) auto minmax(0, 1.3fr);
+  align-items: baseline;
   gap: 10px;
   padding: 4px 0;
   border-bottom: 1px solid var(--divider);
@@ -1610,4 +1612,15 @@ button.rel-row:hover {
 .an-top .segmented button {
   white-space: nowrap;
   padding-inline: 4px;
+}
+
+/* On time by route: the route's worst hour beside its bar. */
+.rel-row.ot-route {
+  grid-template-columns: 52px minmax(0, 1fr) 50px 80px;
+}
+
+.ot-worst {
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
 }

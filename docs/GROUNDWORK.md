@@ -527,6 +527,18 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 - **Server:** `server/range.mjs` turns `?days=N` or `?from=&to=` into the list of dates; every summary (on time, bunching, cancellations, running times, service) takes it, in both the Node server and the Worker.
 - **Free plan:** a range costs the same database reads as the 30-day view at most (about 100 to 200 rows). Custom ranges get less from the Worker's one-minute answer cache, since each is different, which doesn't matter at those sizes.
 
+**Phase 21 — BCT's on-time rule, and measures of what riders experience ✅ (built and checked locally)**
+
+The aim: numbers that reflect what riders go through, not just what the schedule says.
+
+- **BCT's rule:** 1 minute or more early is early, 5 minutes or more late is late (was: more than 1 early, more than 5 late). On 6,602 recorded departures this moved on-time from 61.88% to 61.62%. Worker days recorded before this keep the old edges, a difference of about 0.3 points that rolls out of the 30-day window.
+- **Departures timed as the bus pulls away:** every stop's time is now when GPS shows the bus 25 m past it (or halfway to the next stop, if closer), so a bus that arrives early and waits isn't counted early. The last stop of a trip is timed on arrival and no longer counts as a departure. Arrival times at each stop are recorded too: predictions (which are of arrival) are graded against them, and transfers use the first bus's arrival.
+- **On time tab:** the share more than 10 minutes late and the average lateness of late buses (counted from Oct 29); hours first, for all routes or one; and each route's worst hour (with 20+ departures).
+- **Riders at any stop and at the end:** buses leaving any stop, not just timepoints, 1 minute or more early (every stop in BCT's timetable has a time; between timepoints they're BCT's estimates, as riders see them); and trips reaching their last stop less than 5 minutes late.
+- **Service tab:** stop visits promised and made (a trip cut short counts the stops it reached); for each trip missed or canceled, how long riders waited for the next bus that ran (not counted across trips the recorder couldn't judge); and trips shown to riders as canceled that then ran are described as something riders faced, not only a data problem.
+- **Tests:** 116.
+- **Ridership:** a week of stop-level boardings would let these be weighted by riders instead of trips; not built yet (needs the data).
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

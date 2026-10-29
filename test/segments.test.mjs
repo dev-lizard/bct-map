@@ -20,15 +20,15 @@ test('stop-to-stop running times are interpolated from GPS reports, from the sec
   const log = new SegmentLog({ timezone: TZ });
   const t0 = day + 7 * 3600 + 30 * 60; // 7:30 AM: morning peak
   let runs = 0;
-  // Passes B (400 m) at +35 s and C (800 m) at +75 s, then slows: D (1200 m) at +123.3 s.
+  // Leaves B (25 m past it, 425 m) at +37.5 s and C (825 m) at +77.5 s, then slows: D (1225 m) at +126.7 s.
   for (const [dt, m] of [[0, 50], [30, 350], [60, 650], [90, 950], [130, 1250]]) runs += log.observe(report(t0 + dt, m), { trips, stops });
   assert.equal(runs, 2); // B -> C and C -> D (A -> B needs the bus seen before A)
   const { segments, hourRows } = log.query({ days: 1, nowS: t0 + 200 });
   const am = 1; // PERIODS index of the morning peak
   const byKey = new Map(segments.map(s => [`${s[0]}>${s[1]}`, s.slice(2)]));
   assert.deepEqual(byKey.get('B>C').slice(am * 3, am * 3 + 3), [1, 40, 60]);
-  assert.deepEqual(byKey.get('C>D').slice(am * 3, am * 3 + 3), [1, 48, 60]);
-  assert.deepEqual(hourRows, [{ date: '20261023', hour: 7, n: 2, run: 88, sched: 120 }]);
+  assert.deepEqual(byKey.get('C>D').slice(am * 3, am * 3 + 3), [1, 49, 60]);
+  assert.deepEqual(hourRows, [{ date: '20261023', hour: 7, n: 2, run: 89, sched: 120 }]);
 });
 
 test('repeated reports, long gaps, off-route fixes and impossible speeds are ignored', () => {
@@ -79,14 +79,15 @@ test('a report beyond the last stop doesn\'t time the final segment', () => {
   assert.equal(runs, 0); // only D was timed, and D -> E has no honest end time
 });
 
-test('passages: every stop passed, and the first stop once the bus pulls away from it', () => {
+test('passages: each stop once the bus pulls away from it, 25 m past', () => {
   const log = new SegmentLog({ timezone: TZ });
   const t0 = day + 8 * 3600;
   const passages = [];
   const onPass = p => passages.push(p);
-  // Waiting at A, leaves at +10 s at 5 m/s: 25 m out at +15 s, passes B (400 m) at +90 s.
-  for (const [dt, m] of [[0, 0], [10, 0], [20, 50], [100, 450]]) log.observe(report(t0 + dt, m, { trip: { tripId: 'T1', startDate: '20261023' } }), { trips, stops, onPass });
-  assert.deepEqual(passages.map(p => [p.seq, Math.round(p.time - t0), p.startDate]), [[1, 15], [2, 90]].map(x => [...x, '20261023']));
+  // Waiting at A, leaves at +10 s at 5 m/s: 25 m out at +15 s. Reaches B (400 m) at +90 s, waits there
+  // until +120 s, and is 25 m past it at +125 s: that's when it left B.
+  for (const [dt, m] of [[0, 0], [10, 0], [20, 50], [90, 400], [120, 400], [130, 450]]) log.observe(report(t0 + dt, m, { trip: { tripId: 'T1', startDate: '20261023' } }), { trips, stops, onPass });
+  assert.deepEqual(passages.map(p => [p.seq, Math.round(p.time - t0), p.startDate]), [[1, 15], [2, 125]].map(x => [...x, '20261023']));
 });
 
 test('tracking survives a restart between reports', () => {
