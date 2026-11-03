@@ -247,7 +247,7 @@ async function refresh() {
     bunches = newBunches.length;
     const alerts = alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null);
     canceled = cancellations.observe({ liveTrips: trips.values(), trips: schedule.trips, feedTs, busOnTrip, alerts, passages });
-    service.observe({ vehicles, liveTrips: trips.values(), passages, trips: schedule.trips, nowS: Date.now() / 1000 });
+    service.observe({ vehicles, liveTrips: trips.values(), passages, trips: schedule.trips, feedTs, nowS: Date.now() / 1000 });
   } else {
     service.observe({ vehicles, passages, trips: schedule.trips, nowS: Date.now() / 1000 });
   }

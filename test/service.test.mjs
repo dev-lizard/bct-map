@@ -41,8 +41,33 @@ test('prediction accuracy: each lead-time bucket against the GPS arrival', () =>
   log.observe({ liveTrips: [live(day + 8 * H + 780)], trips, nowS: day + 8 * H + 780 - 60 });
   log.observe({ passages: [pass('T1', 3, day + 8 * H + 780)], trips, nowS: day + 8 * H + 790 });
   const { byRoute } = log.summary({ days: 1, schedule, nowS: day + 12 * H }).predictions;
-  // [count, Σ|error|, accurate, early, late] by bucket: 0-2 exact; 5-10 one min late (accurate); 20-30 three min late (accurate at the edge).
-  assert.deepEqual(byRoute.R1, { 0: [1, 0, 1, 0, 0], 2: [1, 60, 1, 0, 0], 4: [1, 180, 1, 0, 0] });
+  // [live, Σ|error|, accurate, early, late, never came, timetable only] by bucket: 0-2 exact; 5-10 one
+  // min late (accurate); 20-30 was exactly the timetable, so it's counted apart and not graded.
+  assert.deepEqual(byRoute.R1, { 0: [1, 0, 1, 0, 0, 0, 0], 2: [1, 60, 1, 0, 0, 0, 0], 4: [0, 0, 0, 0, 0, 0, 1] });
+});
+
+test('prediction lead time is measured from when the feed was published', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  const live = { tripId: 'T1', startDate: '20261022', canceled: false, nextStop: { seq: 3 }, bySeq: new Map([[3, day + 8 * H + 780]]) };
+  // Published at 8:09:30 (3.5 min ahead: 2-5), read at 8:11:30 (it would look 1.5 min ahead).
+  log.observe({ liveTrips: [live], trips, feedTs: day + 8 * H + 570, nowS: day + 8 * H + 690 });
+  log.observe({ passages: [pass('T1', 3, day + 8 * H + 800)], trips, nowS: day + 8 * H + 810 });
+  assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 12 * H }).predictions.byRoute.R1, { 1: [1, 20, 1, 0, 0, 0, 0] });
+});
+
+test('a prediction for a bus that never came: BCT canceled the trip and GPS never saw it', () => {
+  const run = busesSeen => {
+    const log = new ServiceLog({ timezone: TZ });
+    const live = canceled => ({ tripId: 'T3', startDate: '20261022', canceled, nextStop: { seq: 3 }, bySeq: new Map([[3, day + 8 * H + 1860]]) });
+    for (let t = day + 8 * H; t <= day + 9 * H + 600; t += 60) {
+      const liveTrips = t === day + 8 * H + 600 ? [live(false)] : t === day + 8 * H + 900 ? [live(true)] : [];
+      log.observe({ vehicles: vehicles(t, busesSeen), liveTrips, trips, nowS: t });
+    }
+    return log.summary({ days: 1, schedule, nowS: day + 12 * H }).predictions.byRoute.R1;
+  };
+  // Said 8:31, 21 minutes ahead; canceled at 8:15; settled 30 minutes after 8:31.
+  assert.deepEqual(run(['T1']), { 4: [1, 0, 0, 0, 0, 1, 0] });
+  assert.equal(run(['T1', 'T3']), undefined); // a bus did run it: GPS lost it at the stop, so nobody knows
 });
 
 test('headways and excess wait at timepoints', () => {

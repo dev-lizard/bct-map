@@ -90,6 +90,18 @@ test('passages: each stop once the bus pulls away from it, 25 m past', () => {
   assert.deepEqual(passages.map(p => [p.seq, Math.round(p.time - t0), p.startDate]), [[1, 15], [2, 125]].map(x => [...x, '20261023']));
 });
 
+test('arrival at a stop is kept when the bus also reaches the next stop before the next report', () => {
+  const log = new SegmentLog({ timezone: TZ });
+  const t0 = day + 9 * 3600;
+  const passes = [];
+  const onPass = p => passes.push(p);
+  // 350 m, then 820 m a minute later: reached B (400 m), left it (425 m) and reached C (800 m).
+  for (const [dt, m] of [[0, 350], [60, 820], [120, 1300]]) log.observe(report(t0 + dt, m), { trips, stops, onPass });
+  const at = seq => passes.find(p => p.seq === seq);
+  assert.ok(Math.abs(at(2).arrivedAt - (t0 + (50 / 470) * 60)) < 0.01); // B: its own arrival, not its departure
+  assert.ok(Math.abs(at(3).arrivedAt - (t0 + (450 / 470) * 60)) < 0.01); // C: arrived in one gap, left in the next
+});
+
 test('tracking survives a restart between reports', () => {
   const t0 = day + 12 * 3600;
   const first = new SegmentLog({ timezone: TZ });

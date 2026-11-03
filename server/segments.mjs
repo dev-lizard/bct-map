@@ -70,9 +70,13 @@ function project(line, lat, lon, fromSeg = 0) {
 
 const emptyDay = () => ({ seg: new Map(), hours: Array.from({ length: 24 }, () => [0, 0, 0]) });
 
+// A bus's arrivals not yet matched to a departure. Saved state from before they were kept per stop
+// holds a single { index, time }.
+const arrivals = a => (a == null ? {} : 'index' in a ? { [a.index]: a.time } : { ...a });
+
 export class SegmentLog {
   #days = new Map(); // calendar date -> { seg: Map "from>to" -> [n, run, sched] × periods (flat), hours }
-  #buses = new Map(); // vehicle id -> { tripId, ts, along, seg, passed: { index, time } }
+  #buses = new Map(); // vehicle id -> { tripId, ts, along, seg, passed: { index, time }, arrived: { stop index: time } }
   #lines = new Map(); // trip id -> tripLine (or null)
   dirty = new Set(); // dates changed since the last save
 
@@ -105,13 +109,15 @@ export class SegmentLog {
       if (sameTrip && ts <= prev.ts) continue; // the same report again
       const here = project(line, v.position.latitude, v.position.longitude, sameTrip ? prev.seg - 1 : 0);
       if (!here) continue;
-      const state = { tripId, ts, along: here.along, seg: here.seg, passed: sameTrip ? prev.passed : null, arrived: sameTrip ? prev.arrived ?? null : null };
+      const state = { tripId, ts, along: here.along, seg: here.seg, passed: sameTrip ? prev.passed : null, arrived: sameTrip ? arrivals(prev.arrived) : {} };
       if (sameTrip && ts - prev.ts <= MAX_GAP_S && here.along > prev.along) {
         // Every stop between the two reports, with the time the bus left it (reached it, for the last).
         const last = line.along.length - 1;
         const timeAt = m => prev.ts + ((m - prev.along) / (here.along - prev.along)) * (ts - prev.ts);
+        // Every stop reached, kept until its departure is timed: one gap between reports can take a
+        // bus away from one stop and up to the next, and each needs its own arrival.
         for (let i = 1; i < line.along.length; i++) {
-          if (line.along[i] > prev.along && line.along[i] <= here.along) state.arrived = { index: i, time: timeAt(line.along[i]) };
+          if (line.along[i] > prev.along && line.along[i] <= here.along) state.arrived[i] = timeAt(line.along[i]);
         }
         for (let i = 0; i < line.along.length; i++) {
           const at = i === last ? line.along[i] : Math.min(line.along[i] + DEPARTED_M, (line.along[i] + line.along[i + 1]) / 2);
@@ -120,11 +126,13 @@ export class SegmentLog {
           const time = timeAt(at);
           if (state.passed?.index === i - 1) recorded += this.#add(trip, i - 1, time - state.passed.time, line.along[i] - line.along[i - 1], state.passed.time);
           state.passed = { index: i, time };
-          const arrivedAt = i === last ? time : state.arrived?.index === i ? state.arrived.time : null;
+          const arrivedAt = i === last ? time : state.arrived[i] ?? null;
+          for (const k of Object.keys(state.arrived)) if (Number(k) <= i) delete state.arrived[k];
           onPass?.({ tripId, seq: trip.s[i][0], time, arrivedAt, startDate: v.trip.startDate || null });
         }
       } else if (!sameTrip || ts - prev.ts > MAX_GAP_S) {
         state.passed = null; // a new trip or a long gap: start again from the next stop
+        state.arrived = {};
       }
       this.#buses.set(id, state);
     }

@@ -910,6 +910,12 @@ button.rel-row:hover {
   background: var(--rel-late);
 }
 
+/* A predicted bus that never came: the "late" colour, hatched. */
+.rel-never {
+  background: repeating-linear-gradient(135deg, var(--rel-late) 0 3px, transparent 3px 6px);
+  box-shadow: inset 0 0 0 1px var(--rel-late);
+}
+
 .rel-pct,
 .rel-hour {
   font-variant-numeric: tabular-nums;

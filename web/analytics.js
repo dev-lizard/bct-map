@@ -449,35 +449,44 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
   function renderPredictions() {
     const s = data.service;
     if (s.error) return failed('prediction data', s.error);
+    // Per bucket: [live predictions, Σ |error| s, accurate, bus early, bus late, bus never came,
+    // timetable only]. Days recorded before the last two were kept have five numbers.
     const sum = list => {
-      const out = s.buckets.map(() => [0, 0, 0, 0, 0]);
+      const out = s.buckets.map(() => [0, 0, 0, 0, 0, 0, 0]);
       for (const buckets of list) for (const [b, v] of Object.entries(buckets)) v.forEach((x, i) => { out[b][i] += x; });
       return out;
     };
     const routeBuckets = routeId ? [s.predictions.byRoute[routeId] ?? {}] : Object.values(s.predictions.byRoute);
     const buckets = sum(routeBuckets);
-    const n = buckets.reduce((a, b) => a + b[0], 0);
-    const accuracy = b => (b[0] ? Math.round((1000 * b[2]) / b[0]) / 10 : null);
+    const total = buckets.reduce((a, b) => a.map((x, i) => x + b[i]), [0, 0, 0, 0, 0, 0, 0]);
+    const n = total[0];
+    const share = (x, b) => (b[0] ? Math.round((1000 * x) / b[0]) / 10 : null);
+    const accuracy = b => share(b[2], b);
+    const meanMiss = b => (b[0] > b[5] ? Math.round(b[1] / (b[0] - b[5])) : null); // over buses that came
     const bucketRows = s.buckets.map((info, i) => {
       const b = buckets[i];
       if (!b[0]) return el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, info.label), el('span', { className: 'status' }, 'no data yet'), el('span', {}));
-      const p = { earlyPct: Math.round((1000 * b[3]) / b[0]) / 10, onTimePct: accuracy(b), latePct: Math.round((1000 * b[4]) / b[0]) / 10, samples: b[0] };
-      const row = el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, info.label), stackedBar(p, ['Bus came early', 'Accurate', 'Bus came late']), el('span', { className: 'rel-pct' }, `${p.onTimePct}%${b[0] < FEW ? '*' : ''}`));
-      row.title = `${info.label} ahead: ${p.onTimePct}% accurate, ${p.earlyPct}% bus came more than 1 min early, ${p.latePct}% more than 3 min late; average miss ${Math.round(b[1] / b[0])} s (${b[0]} predictions)`;
+      const p = { earlyPct: share(b[3], b), onTimePct: accuracy(b), latePct: share(b[4], b), neverPct: share(b[5], b), samples: b[0] };
+      const row = el('div', { className: 'rel-row' }, el('span', { className: 'rel-hour' }, info.label), stackedBar(p, ['Bus came early', 'Accurate', 'Bus came late', 'Bus never came']), el('span', { className: 'rel-pct' }, `${p.onTimePct}%${b[0] < FEW ? '*' : ''}`));
+      row.title = `${info.label} ahead: ${p.onTimePct}% accurate, ${p.earlyPct}% bus came more than 1 min early, ${p.latePct}% more than 3 min late${b[5] ? `, ${p.neverPct}% bus never came` : ''}; average miss ${meanMiss(b) ?? '–'} s (${b[0]} predictions${b[6] ? `; ${b[6]} more were only the timetable` : ''})`;
       return row;
     });
     const routeRows = Object.entries(s.predictions.byRoute).map(([id, bs]) => {
       const t = sum([bs]);
-      const all = t.reduce((a, b) => a.map((x, i) => x + b[i]), [0, 0, 0, 0, 0]);
-      return { routeId: id, n: all[0], accuracy: accuracy(all), early: all[0] ? Math.round((1000 * all[3]) / all[0]) / 10 : null, mean: all[0] ? Math.round(all[1] / all[0]) : null, near: accuracy(t[2]) };
-    });
+      const all = t.reduce((a, b) => a.map((x, i) => x + b[i]), [0, 0, 0, 0, 0, 0, 0]);
+      return { routeId: id, n: all[0], accuracy: accuracy(all), early: share(all[3], all), never: all[5], mean: meanMiss(all), near: accuracy(t[2]), timetable: all[6] };
+    }).filter(r => r.n || r.timetable);
+    const asides = [
+      total[5] ? `${total[5].toLocaleString('en-US')} were for buses that never came (BCT canceled the trip after predicting it, and GPS never saw a bus on it); they count as misses.` : '',
+      total[6] ? `Another ${total[6].toLocaleString('en-US')} were only the timetable, with no live information, so they aren't graded.` : '',
+    ].filter(Boolean).join(' ');
     return [
       head('Prediction accuracy', csvButton(`broward-predictions-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => [
-        ['how_far_ahead', 'predictions', 'accurate_pct', 'bus_early_pct', 'bus_late_pct', 'mean_miss_s'],
-        ...s.buckets.map((info, i) => [info.label, buckets[i][0], accuracy(buckets[i]), buckets[i][0] ? Math.round((1000 * buckets[i][3]) / buckets[i][0]) / 10 : null, buckets[i][0] ? Math.round((1000 * buckets[i][4]) / buckets[i][0]) / 10 : null, buckets[i][0] ? Math.round(buckets[i][1] / buckets[i][0]) : null]),
+        ['how_far_ahead', 'predictions', 'accurate_pct', 'bus_early_pct', 'bus_late_pct', 'bus_never_came_pct', 'mean_miss_s', 'timetable_only_not_graded'],
+        ...s.buckets.map((info, i) => { const b = buckets[i]; return [info.label, b[0], accuracy(b), share(b[3], b), share(b[4], b), share(b[5], b), meanMiss(b), b[6]]; }),
       ], n)),
-      el('p', { className: 'status' }, `BCT's predicted arrival at each timepoint, checked against when GPS saw the bus there. Accurate: the bus came no more than 1 minute before the prediction or 3 minutes after. Early arrivals matter most: riders following the prediction miss the bus. ${n.toLocaleString('en-US')} predictions, ${routeText()}, ${periodText()}.`),
-      el('div', { className: 'rel-legend an-legend' }, ...[['early', 'Bus came early'], ['onTime', 'Accurate'], ['late', 'Bus came late']].map(([k, label]) => el('span', {}, el('span', { className: `rel-swatch rel-${k}` }), label))),
+      el('p', { className: 'status' }, `BCT's predicted arrival at each timepoint, checked against when GPS saw the bus arrive. Accurate: the bus came no more than 1 minute before the prediction or 3 minutes after. Early arrivals matter most: riders following the prediction miss the bus. ${n.toLocaleString('en-US')} predictions, ${routeText()}, ${periodText()}.${asides ? ` ${asides}` : ''}`),
+      el('div', { className: 'rel-legend an-legend' }, ...[['early', 'Bus came early'], ['onTime', 'Accurate'], ['late', 'Bus came late'], ['never', 'Bus never came']].map(([k, label]) => el('span', {}, el('span', { className: `rel-swatch rel-${k}` }), label))),
       el('h4', {}, 'By how far ahead the prediction was made'),
       ...bucketRows,
       !routeId && routeRows.length > 0 && el('h4', {}, 'By route'),
@@ -486,6 +495,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'accuracy', label: 'Accurate', num: true, value: r => r.accuracy ?? -1, render: r => (r.accuracy == null ? '–' : `${r.accuracy}%`) },
         { key: 'near', label: '5–10 min', num: true, value: r => r.near ?? -1, render: r => (r.near == null ? '–' : `${r.near}%`) },
         { key: 'early', label: 'Bus early', num: true, value: r => r.early ?? -1, render: r => (r.early == null ? '–' : `${r.early}%`) },
+        { key: 'never', label: 'Never came', num: true, value: r => r.never, render: r => (r.never ? String(r.never) : '–') },
         { key: 'mean', label: 'Avg miss', num: true, value: r => r.mean ?? -1, render: r => (r.mean == null ? '–' : seconds(r.mean)) },
         { key: 'n', label: 'Predictions', num: true, value: r => r.n },
       ], routeRows, { sort: { key: 'accuracy', dir: 1 }, onRow: r => setRoute(r.routeId) }),
@@ -1096,9 +1106,10 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       el('div', { className: 'an-axis' }, ...['12 AM', '6 AM', '12 PM', '6 PM'].map(t => el('span', {}, t))));
   }
 
+  // s: { earlyPct, onTimePct, latePct, neverPct (predictions only), samples }.
   function stackedBar(s, labels = ['Early', 'On time', 'Late']) {
     const bar = el('div', { className: 'rel-bar', ariaHidden: 'true' });
-    ['early', 'onTime', 'late'].forEach((key, i) => {
+    ['early', 'onTime', 'late', 'never'].forEach((key, i) => {
       const value = s[`${key}Pct`];
       if (!value) return;
       const seg = el('span', { className: `rel-seg rel-${key}`, title: `${labels[i]}: ${value}%${s.samples ? ` of ${s.samples}` : ''}` });

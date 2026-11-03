@@ -195,6 +195,7 @@ table.m tr.hl td { background: var(--m-hover); }
 .c-early { background: var(--early-fill); } .c-ok { background: var(--ok); } .c-late { background: var(--late-fill); }
 .c-cancel { background: var(--cancel); } .c-bar { background: var(--bar); }
 .c-partial { background: repeating-linear-gradient(135deg, var(--ok) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--ok); }
+.c-never { background: repeating-linear-gradient(135deg, var(--late-fill) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--late-fill); }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--m-muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex: none; }
@@ -259,7 +260,7 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Oct 29, 2026 (live bunching marker)</span>
+    <span class="updated">Matches the app as of Nov 3, 2026 (prediction grading)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -542,12 +543,14 @@ table.m tr.hl td { background: var(--m-hover); }
         </div>
       </figure>
       <div class="words">
-        <p>For each bus and each timepoint ahead of it, the app saves BCT's guess once in each of five windows: <strong>20–30, 10–20, 5–10, 2–5 and 0–2 minutes</strong> before the bus is due. When GPS sees the bus reach the stop (its arrival, since BCT predicts arrivals), each saved guess is graded:</p>
+        <p>For each bus and each timepoint ahead of it, the app saves BCT's guess once in each of five windows: <strong>20–30, 10–20, 5–10, 2–5 and 0–2 minutes</strong> before the bus is due, timed from when BCT published the feed. When GPS sees the bus reach the stop (its arrival, since BCT predicts arrivals), each saved guess is graded:</p>
         <ul class="plain">
           <li><div><strong>Accurate:</strong> the bus came no more than 1 minute before the guess, or 3 minutes after.</div></li>
-          <li><div><strong>Bus came early:</strong> more than 1 minute before the guess. The worst case, because someone trusting the countdown misses the bus.</div></li>
+          <li><div><strong>Bus came early:</strong> more than 1 minute before the guess. Riders trusting the countdown miss the bus, so this is the outcome to watch.</div></li>
           <li><div><strong>Bus came late:</strong> more than 3 minutes after the guess.</div></li>
+          <li><div><strong>Bus never came:</strong> BCT canceled the trip after making the guess, and GPS never saw a bus on it while the app was recording. It counts as a miss. If a bus did run and GPS just lost it, nobody knows, so that guess isn't counted at all.</div></li>
         </ul>
+        <p>A guess that is exactly the timetable time carries no live information. It's counted separately and not graded, so the score reflects BCT's live predictions only.</p>
       </div>
     </div>
     <div class="pair">
@@ -555,26 +558,27 @@ table.m tr.hl td { background: var(--m-hover); }
         <span class="example">Example numbers</span>
         <div class="mock">
           <div class="m-head"><h4>Prediction accuracy</h4><span class="m-btn">CSV</span></div>
-          <div class="legend"><span><span class="sw c-early"></span>Bus came early</span><span><span class="sw c-ok"></span>Accurate</span><span><span class="sw c-late"></span>Bus came late</span></div>
+          <div class="legend"><span><span class="sw c-early"></span>Bus came early</span><span><span class="sw c-ok"></span>Accurate</span><span><span class="sw c-late"></span>Bus came late</span><span><span class="sw c-never"></span>Bus never came</span></div>
           <div class="m-sub"><span class="n sm">1</span>By how far ahead the prediction was made</div>
           <div class="srow"><span class="lbl">0–2 min</span><span class="sbar"><span class="c-early" style="flex:4"></span><span class="c-ok" style="flex:91"></span><span class="c-late" style="flex:5"></span></span><span class="pct">91%</span></div>
-          <div class="srow"><span class="lbl">2–5 min</span><span class="sbar"><span class="c-early" style="flex:7"></span><span class="c-ok" style="flex:82"></span><span class="c-late" style="flex:11"></span></span><span class="pct">82%</span></div>
-          <div class="srow"><span class="lbl">5–10 min</span><span class="sbar"><span class="c-early" style="flex:11"></span><span class="c-ok" style="flex:66"></span><span class="c-late" style="flex:23"></span></span><span class="pct">66%</span></div>
-          <div class="srow"><span class="lbl">10–20 min</span><span class="sbar"><span class="c-early" style="flex:14"></span><span class="c-ok" style="flex:48"></span><span class="c-late" style="flex:38"></span></span><span class="pct">48%</span></div>
-          <div class="srow"><span class="lbl">20–30 min</span><span class="sbar"><span class="c-early" style="flex:16"></span><span class="c-ok" style="flex:37"></span><span class="c-late" style="flex:47"></span></span><span class="pct">37%</span></div>
+          <div class="srow"><span class="lbl">2–5 min</span><span class="sbar"><span class="c-early" style="flex:7"></span><span class="c-ok" style="flex:82"></span><span class="c-late" style="flex:10"></span><span class="c-never" style="flex:1"></span></span><span class="pct">82%</span></div>
+          <div class="srow"><span class="lbl">5–10 min</span><span class="sbar"><span class="c-early" style="flex:11"></span><span class="c-ok" style="flex:66"></span><span class="c-late" style="flex:21"></span><span class="c-never" style="flex:2"></span></span><span class="pct">66%</span></div>
+          <div class="srow"><span class="lbl">10–20 min</span><span class="sbar"><span class="c-early" style="flex:14"></span><span class="c-ok" style="flex:48"></span><span class="c-late" style="flex:36"></span><span class="c-never" style="flex:2"></span></span><span class="pct">48%</span></div>
+          <div class="srow"><span class="lbl">20–30 min</span><span class="sbar"><span class="c-early" style="flex:16"></span><span class="c-ok" style="flex:37"></span><span class="c-late" style="flex:44"></span><span class="c-never" style="flex:3"></span></span><span class="pct">37%</span></div>
           <div class="m-sub"><span class="n sm">2</span>By route</div>
           <div class="tablewrap"><table class="m">
-            <thead><tr><th>Route</th><th class="num">Accurate</th><th class="num">5–10 min</th><th class="num">Bus early</th><th class="num">Avg miss</th><th class="num">Predictions</th></tr></thead>
-            <tbody><tr><td><span class="badge" style="background:#F16477">18</span></td><td class="num">58%</td><td class="num">61%</td><td class="num">12%</td><td class="num">3.1 min</td><td class="num">1,840</td></tr></tbody>
+            <thead><tr><th>Route</th><th class="num">Accurate</th><th class="num">5–10 min</th><th class="num">Bus early</th><th class="num">Never came</th><th class="num">Avg miss</th><th class="num">Predictions</th></tr></thead>
+            <tbody><tr><td><span class="badge" style="background:#F16477">18</span></td><td class="num">58%</td><td class="num">61%</td><td class="num">12%</td><td class="num">9</td><td class="num">3.1 min</td><td class="num">1,840</td></tr></tbody>
           </table></div>
         </div>
       </figure>
       <div class="words">
         <ol>
           <li><span class="n">1</span><div><strong>One row per window.</strong> "10–20 min: 48%" means that of the guesses made 10 to 20 minutes ahead, 48% were accurate. Guesses made further ahead are naturally worse; the question is by how much.</div></li>
-          <li><span class="n">2</span><div><strong>By route:</strong> overall accuracy, accuracy 5–10 minutes out (when most riders check), how often the bus came early, the average miss, and how many guesses were graded.</div></li>
+          <li><span class="n">2</span><div><strong>By route:</strong> overall accuracy, accuracy 5–10 minutes out (when most riders check), how often the bus came early, how many guesses were for buses that never came, the average miss (over buses that came), and how many guesses were graded.</div></li>
         </ol>
-        <p class="muted">Only timepoints are graded, since that's where GPS timing is reliable. The live Worker checks once a minute, so a short window (like 0–2 minutes) is sometimes skipped for a bus.</p>
+        <p>The note above the bars says how many guesses were for buses that never came, and how many were only the timetable and left out. Hovering a row gives its exact shares and average miss.</p>
+        <p class="muted">Only timepoints are graded, since that's where GPS timing is reliable. GPS fixes come about once a minute, so the moment a bus reached the stop is worked out between two fixes. The live Worker checks once a minute, so a short window (like 0–2 minutes) is sometimes skipped for a bus. Days recorded before Nov 3, 2026 were graded the old way: timetable-only guesses were included, buses that never came weren't counted, and some arrivals were timed on departure.</p>
       </div>
     </div>
   </section>

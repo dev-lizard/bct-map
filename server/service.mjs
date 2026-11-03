@@ -5,8 +5,10 @@
 //     stretch of each trip GPS saw it run, and which minutes the recorder was running, so a trip
 //     with no bus counts as missed, and one run only in part as partial, only when the recorder was
 //     watching for its whole run. Trips BCT marked canceled are counted apart.
-//   - Prediction accuracy: BCT's predicted time at each timepoint, sampled when the bus was 0-2,
-//     2-5, 5-10, 10-20 and 20-30 minutes away, against when GPS saw it pass.
+//   - Prediction accuracy: BCT's predicted arrival at each timepoint, sampled when the bus was 0-2,
+//     2-5, 5-10, 10-20 and 20-30 minutes away (by the feed's own clock), against when GPS saw it
+//     arrive. Predictions that were only the timetable are counted apart, and a prediction for a
+//     bus that never came (BCT canceled the trip and GPS never saw it) counts as a miss.
 //   - Headways: on frequent service (timetabled 20 minutes apart or less), the gap between buses
 //     at each timepoint against the timetabled gap, for excess wait time.
 //   - Schedule fit: each trip's running time between its first and last timepoint seen, against
@@ -51,6 +53,9 @@ const DROPOUT_REMAINING_S = 15 * 60; // a bus that vanishes with this much of it
 const MAX_HEADWAY_S = 90 * 60;
 const MAX_PLAUSIBLE_DELAY_S = 3 * 3600;
 const PENDING_MAX_AGE_S = 3 * 3600;
+// A prediction still unmatched this long after the time it gave is settled: the bus never came if BCT
+// canceled the trip, GPS never saw it, and the recorder was watching; otherwise it's dropped.
+const NEVER_CAME_AFTER_S = 30 * 60;
 const HUB_RECENT_S = 60 * 60; // buses at a hub are paired with others seen within this long
 const TRIP_DONE_AFTER_S = 10 * 60; // no new stops passed for this long: the trip is over
 const RUNTIME_MIN_SHARE = 0.8; // the stops seen must cover this share of the trip's timetabled time
@@ -63,6 +68,9 @@ const MAX_LIST = 300;
 
 const periodOf = hour => PERIODS.findIndex(p => hour >= p.from && hour < p.to);
 const add = (into, values) => values.forEach((v, i) => { into[i] = (into[i] ?? 0) + v; });
+// A graded prediction: [live predictions, Σ |error| s, accurate, bus early, bus late, bus never came,
+// timetable only]. Timetable-only predictions are counted only in the last place, not graded.
+const TIMETABLE_ONLY = [0, 0, 0, 0, 0, 0, 1];
 const FEED_KEYS = ['reports', 'stale', 'gaps', 'dropouts', 'predictedTrips', 'timetableOnly'];
 
 function newDay() {
@@ -93,7 +101,10 @@ export function findHubs(stopRows, schedule, minRoutes = HUB_MIN_ROUTES) {
 
 export class ServiceLog {
   #days = new Map(); // date -> day (seen, runtime and dropouts by service date; the rest by calendar date)
-  #pending = new Map(); // "trip|seq" -> { routeId, madeAt, b: { bucket index: predicted time } }
+  // "trip|seq" -> { routeId, madeAt, date: service date, due: latest predicted time,
+  //   b: { bucket index: predicted time }, t: { bucket index: 1 if it was only the timetable } }
+  #pending = new Map();
+  #canceled = new Map(); // trip id -> when the feed last marked it canceled
   #lastAtStop = new Map(); // "route|dir|stop" -> [time, trip id, service date]
   #trips = new Map(); // trip id -> { date, routeId, first: [seq, time], last: [seq, time], seenAt }
   #lastReport = new Map(); // vehicle id -> [report time, trip id]
@@ -140,7 +151,8 @@ export class ServiceLog {
 
   // vehicles: decoded vehicle feed (or null if it failed). liveTrips: summarizeTripUpdates() trips.
   // passages: stops buses were seen to pass (SegmentLog onPass). nowS: this batch's time.
-  observe({ vehicles = null, liveTrips = [], passages = [], trips, nowS = Date.now() / 1000 }) {
+  // feedTs: when the trip-updates feed was published, which is when its predictions were made.
+  observe({ vehicles = null, liveTrips = [], passages = [], trips, feedTs = null, nowS = Date.now() / 1000 }) {
     // After a gap in recording (or on the first call, with nothing to go by), trips left over from
     // before stopped being watched, not running: don't count them as buses that vanished.
     const recordingGap = this.#lastObserveS == null || nowS - this.#lastObserveS > RECORDING_GAP_S;
@@ -175,8 +187,10 @@ export class ServiceLog {
 
     // Predictions at each timepoint ahead, once per lead-time bucket; and whether BCT's prediction
     // for the next stop is just the timetable.
+    const madeAt = feedTs ?? nowS;
     for (const live of liveTrips) {
       const trip = trips[live.tripId];
+      if (trip && live.canceled) this.#canceled.set(live.tripId, nowS);
       if (!trip || live.canceled || !live.nextStop) continue;
       const nextRow = trip.s.find(r => r[0] === live.nextStop.seq);
       const nextPredicted = live.bySeq.get(live.nextStop.seq);
@@ -190,15 +204,19 @@ export class ServiceLog {
           route[3]++;
         }
       }
-      for (const [seq, , , timepoint] of trip.s) {
+      const dayStart = live.startDate ? serviceDayStart(live.startDate, this.timezone) : null;
+      for (const [seq, , secs, timepoint] of trip.s) {
         if (seq < live.nextStop.seq || timepoint !== 1) continue;
         const predicted = live.bySeq.get(seq);
-        const lead = predicted - nowS;
+        const lead = predicted - madeAt;
         const b = LEAD_BUCKETS.findIndex(x => lead >= x.min && lead < x.max);
         if (!predicted || b < 0) continue;
         const key = `${live.tripId}|${seq}`;
-        const entry = this.#pending.get(key) ?? this.#pending.set(key, { routeId: trip.r, madeAt: nowS, b: {} }).get(key);
-        entry.b[b] ??= Math.round(predicted);
+        const entry = this.#pending.get(key) ?? this.#pending.set(key, { routeId: trip.r, madeAt: nowS, date: live.startDate || null, due: 0, b: {}, t: {} }).get(key);
+        if (entry.b[b] != null) continue;
+        entry.b[b] = Math.round(predicted);
+        entry.due = Math.max(entry.due ?? 0, entry.b[b]);
+        if (dayStart != null && secs != null && Math.abs(predicted - (dayStart + secs)) < 1) (entry.t ??= {})[b] = 1;
       }
     }
 
@@ -228,7 +246,7 @@ export class ServiceLog {
         const day = this.#day(calendarDate);
         for (const [b, predicted] of Object.entries(pending.b)) {
           const err = Math.round(p.arrivedAt ?? p.time) - predicted; // predictions are of arrival
-          const stats = [1, Math.abs(err), err >= PREDICTION_EARLY_S && err <= PREDICTION_LATE_S ? 1 : 0, err < PREDICTION_EARLY_S ? 1 : 0, err > PREDICTION_LATE_S ? 1 : 0];
+          const stats = pending.t?.[b] ? TIMETABLE_ONLY : [1, Math.abs(err), err >= PREDICTION_EARLY_S && err <= PREDICTION_LATE_S ? 1 : 0, err < PREDICTION_EARLY_S ? 1 : 0, err > PREDICTION_LATE_S ? 1 : 0, 0, 0];
           add(((day.pred[trip.r] ??= {})[b] ??= []), stats);
           add(((day.predHour[hour] ??= {})[b] ??= []), stats);
         }
@@ -303,7 +321,42 @@ export class ServiceLog {
       const startDelay = firstTimepoint?.[0] === a[0] ? state.first[1] - (serviceDayStart(state.date, this.timezone) + a[2]) : null;
       this.#day(state.date).runtime[tripId] = [state.last[1] - state.first[1], scheduled, state.routeId, startDelay];
     }
-    for (const [key, entry] of this.#pending) if (nowS - entry.madeAt > PENDING_MAX_AGE_S) this.#pending.delete(key);
+    this.#settlePending(nowS);
+  }
+
+  // Predictions whose bus never showed: a miss if BCT canceled the trip and GPS never saw a bus on
+  // it while the recorder watched; otherwise (GPS lost it, the recorder was off) nobody knows, and
+  // they're dropped.
+  #settlePending(nowS) {
+    for (const [key, entry] of this.#pending) {
+      const due = entry.due || entry.madeAt + PENDING_MAX_AGE_S - NEVER_CAME_AFTER_S;
+      if (nowS - due <= NEVER_CAME_AFTER_S && nowS - entry.madeAt <= PENDING_MAX_AGE_S) continue;
+      this.#pending.delete(key);
+      const tripId = key.slice(0, key.lastIndexOf('|'));
+      const canceledAt = this.#canceled.get(tripId);
+      if (canceledAt == null || canceledAt < entry.madeAt || !entry.date) continue;
+      if (this.#days.get(entry.date)?.seen.has(tripId) || !this.#watched(entry.madeAt, due + NEVER_CAME_AFTER_S)) continue;
+      const { date, hour } = this.#clock(due);
+      const day = this.#day(date);
+      for (const b of Object.keys(entry.b)) {
+        const stats = entry.t?.[b] ? TIMETABLE_ONLY : [1, 0, 0, 0, 0, 1, 0];
+        add(((day.pred[entry.routeId] ??= {})[b] ??= []), stats);
+        add(((day.predHour[hour] ??= {})[b] ??= []), stats);
+      }
+    }
+    for (const [tripId, at] of this.#canceled) if (nowS - at > PENDING_MAX_AGE_S) this.#canceled.delete(tripId);
+  }
+
+  // Whether the recorder ran for COVERAGE_MIN of the minutes from..to.
+  #watched(from, to) {
+    let minutes = 0;
+    let covered = 0;
+    for (let t = Math.floor(from / 60) * 60; t < to; t += 60) {
+      const { date, minute } = this.#clock(t);
+      minutes++;
+      covered += this.#days.get(date)?.coverage[minute] ?? 0;
+    }
+    return minutes > 0 && covered / minutes >= COVERAGE_MIN;
   }
 
   // A bus at a hub: pair it with the other routes' buses there in the last hour, as the arriving or
@@ -359,7 +412,7 @@ export class ServiceLog {
 
   exportState() {
     return {
-      pending: Object.fromEntries(this.#pending), lastAtStop: Object.fromEntries(this.#lastAtStop), trips: Object.fromEntries(this.#trips),
+      pending: Object.fromEntries(this.#pending), canceled: Object.fromEntries(this.#canceled), lastAtStop: Object.fromEntries(this.#lastAtStop), trips: Object.fromEntries(this.#trips),
       lastReport: Object.fromEntries(this.#lastReport), atHubs: Object.fromEntries(this.#atHubs), lastObserveS: this.#lastObserveS,
     };
   }
@@ -367,6 +420,7 @@ export class ServiceLog {
   importState(state) {
     if (!state) return;
     this.#pending = new Map(Object.entries(state.pending ?? {}));
+    this.#canceled = new Map(Object.entries(state.canceled ?? {}));
     this.#lastAtStop = new Map(Object.entries(state.lastAtStop ?? {}));
     this.#trips = new Map(Object.entries(state.trips ?? {}));
     this.#lastReport = new Map(Object.entries(state.lastReport ?? {}));
@@ -557,7 +611,7 @@ export class ServiceLog {
       for (const [route, buckets] of Object.entries(d.pred)) for (const [b, v] of Object.entries(buckets)) add(((byRoute[route] ??= {})[b] ??= []), v);
       for (const [hour, buckets] of Object.entries(d.predHour)) for (const [b, v] of Object.entries(buckets)) add(((byHour[hour] ??= {})[b] ??= []), v);
     }
-    return { byRoute, byHour }; // [count, sum of |error|, accurate, early, late] per bucket
+    return { byRoute, byHour }; // per bucket: [live predictions, Σ |error|, accurate, early, late, never came, timetable only]
   }
 
   #headways(dates) {
@@ -602,7 +656,7 @@ export class ServiceLog {
     return dates.map((date, i) => {
       const d = this.#days.get(date);
       const pred = {};
-      for (const [route, buckets] of Object.entries(d?.pred ?? {})) for (const v of Object.values(buckets)) add((pred[route] ??= []), [v[0], v[2], v[3]]);
+      for (const [route, buckets] of Object.entries(d?.pred ?? {})) for (const v of Object.values(buckets)) add((pred[route] ??= []), [v[0], v[2], v[3], v[5] ?? 0]);
       const headway = [];
       for (const v of Object.values(d?.headway ?? {})) add(headway, v);
       const transfers = [];

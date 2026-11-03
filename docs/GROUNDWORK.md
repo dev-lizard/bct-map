@@ -447,7 +447,7 @@ Free hosting that keeps every feature. The walkthrough is in [DEPLOY.md](DEPLOY.
 
 - **Recording** (`server/service.mjs`): one value per day (`service_days` in the Worker, `data/service/` in Node), plus a small state saved every tick (pending predictions, the last bus at each timepoint, trips in progress).
   - **Service delivered:** trips a bus was seen on (vehicle feed or GPS), and the minutes the recorder ran. Once a trip is half an hour over, it counts as ran, canceled (BCT said so), missed without notice (no bus, no notice, and the recorder watched at least 90% of its run), or not judged.
-  - **Prediction accuracy:** BCT's prediction for each timepoint, taken the first time the bus is 0–2, 2–5, 5–10, 10–20 and 20–30 minutes away, and scored when GPS sees it pass. Accurate means 1 minute early to 3 minutes late; a bus that came early counts separately, since riders following the prediction miss it.
+  - **Prediction accuracy:** BCT's prediction for each timepoint, taken the first time the bus is 0–2, 2–5, 5–10, 10–20 and 20–30 minutes away, and scored when GPS sees it pass (refined in Phase 24). Accurate means 1 minute early to 3 minutes late; a bus that came early counts separately, since riders following the prediction miss it.
   - **Headways:** at timepoints, on service timetabled 20 minutes apart or less, the actual and timetabled gap between consecutive buses. They're summed so the excess wait can be worked out: Σh²/2Σh, actual minus timetabled.
   - **Schedule fit:** a trip's running time from its first to its last timepoint GPS saw (at least 80% of its timetabled time), recorded 10 minutes after it stops moving.
   - **Tests:** 5 in `test/service.test.mjs`.
@@ -558,6 +558,15 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Click:** a popup in the app's panel style: the route, how far apart the buses are due at the stop against the timetable, and buttons to open the front or following bus's trip.
 - **Checked:** no buses were bunched at the time, so the browser's copy of the rule was patched for the session to treat two nearby route 12 buses as bunched: the 3D marker, the 2D badge, the popup and both trip buttons worked.
 
+**Phase 24 — fairer prediction grading ✅ (built and tested locally)**
+
+- **Arrival times kept per stop** (`server/segments.mjs`): only the latest arrival between two GPS fixes used to be kept, so when a bus left one stop and reached the next between fixes (common with the Worker's one-minute pace), the first stop's prediction was graded against its departure. That made predictions look later than they were, and hid buses that came early. Each arrival is now kept until that stop's departure is timed.
+- **Lead time from the feed's clock:** how far ahead a prediction was made is measured from when BCT published the trip updates, not when the recorder read them.
+- **Timetable-only predictions** (exactly the timetable time) are counted apart and not graded.
+- **Buses that never came:** a prediction still unmatched 30 minutes after the time it gave counts as a miss when BCT canceled the trip after predicting it, GPS never saw a bus on it, and the recorder ran for 90% of that time. Otherwise it's dropped as unknown.
+- **Shown:** a hatched red "Bus never came" share on each bar, a Never came column by route, and a note with both counts. Each bucket is now `[live, Σ |error|, accurate, early, late, never came, timetable only]`; days recorded before this have the first five.
+- **Cloudflare:** no new requests, rows read or rows written; the saved tick state gains a small map of recently canceled trips.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---
@@ -582,7 +591,7 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 | `scripts/build-static.mjs` | BCT GTFS zip → `public/data/<folder>/…`, including the compact `schedule.json` | ✅ 44 routes, 5,981 trips, 4,793 stops, 166 shapes; schedule 1.9 MB (148 KB gzipped) |
 | `scripts/build-site.mjs` | Assembles `_site/` for GitHub Pages and writes `runtime-config.js` | ✅ served under a subpath against a local Worker |
 | `web/live.js` | Live snapshot (bearing, speed, delay, joins), stop departure boards, trip timelines, alerts, in the browser | ✅ against live feeds, plus 9 tests in `test/departures.test.mjs` and `test/schedule.test.mjs` |
-| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit and late starts, delay by timepoint, transfers at hubs, feed quality | ✅ 9 tests; recording live; `/api/service` checked in Node and `wrangler dev` |
+| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit and late starts, delay by timepoint, transfers at hubs, feed quality | ✅ 11 tests; recording live; `/api/service` checked in Node and `wrangler dev` |
 | `server/segments.mjs`, `web/speeds.js` | Running times between stops from GPS; speeds, congestion and the map layer | ✅ 9 tests; recorded live and checked in a browser |
 | `server/analytics.mjs`, `server/analytics-log.mjs` | Bunching, cancellations, adherence by weather; the Node server's event log | ✅ 8 tests; checked on live data and in the panel |
 | `web/buses.js`, `web/analytics.js`, `web/csv.js` | Buses table and Analytics panel, with CSV downloads | ✅ checked in a browser at 800 and 1,280 px |

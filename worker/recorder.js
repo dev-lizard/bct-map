@@ -148,7 +148,7 @@ export class Recorder extends DurableObject {
         liveTrips: live.trips.values(), trips: this.#schedule.trips, feedTs: live.feedTs, busOnTrip,
         alerts: alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null), passages,
       });
-      this.#service.observe({ vehicles, liveTrips: live.trips.values(), passages, trips: this.#schedule.trips, nowS });
+      this.#service.observe({ vehicles, liveTrips: live.trips.values(), passages, trips: this.#schedule.trips, feedTs: live.feedTs, nowS });
     }
     this.#prune();
     this.#saveDaily();
