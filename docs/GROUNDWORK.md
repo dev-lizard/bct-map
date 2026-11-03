@@ -567,6 +567,25 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Shown:** a hatched red "Bus never came" share on each bar, a Never came column by route, and a note with both counts. Each bucket is now `[live, Σ |error|, accurate, early, late, never came, timetable only]`; days recorded before this have the first five.
 - **Cloudflare:** no new requests, rows read or rows written; the saved tick state gains a small map of recently canceled trips.
 
+**Phase 25 — trips no longer end between timepoints ✅ (built and tested locally)**
+
+- **The bug:** a trip counted as over after 10 minutes without a new *timepoint*, but BCT's timepoints are a median of 12 minutes apart (74% of gaps are 10+ minutes). Nearly every trip was cut off part-way: Schedule fit had no trips (0 in a week of local recording) and Feed's "vanished mid-trip" counted about 1,200–1,370 buses a day out of about 2,550 trips.
+- **Fix** (`server/service.mjs`): any stop passed, or a fresh GPS report on the trip, keeps it open. Buses aren't counted as vanished in minutes when the vehicle feed itself failed.
+- **Data:** days recorded before the fix keep their numbers; the guide notes both tabs read wrong before Nov 3, 2026.
+- **Cloudflare:** no change to requests, rows read or rows written.
+
+**Phase 26 — from figures to actions: Needs attention, goals, ranges ✅ (built and checked locally)**
+
+- **Ownership:** the nightly build carries each trip's `block_id` (304 blocks, like "02-02") in `schedule.json` (the trip tuple's last field; `trip.b` in `web/schedule.js`). Missed and partly-run trips show their block, the canceled trips CSV has a block column, and contracted routes (4, 6, 15, 23, 56) are marked.
+- **New recording** (`server/service.mjs`, in each day's existing row, so no new rows): on time by trip (`ontimeTrip`), GPS reports, stale reports, gaps and vanishings by vehicle (`feedVehicle`), and the minutes riders had at each transfer (`transferSlack`, −15..15). `/api/service` adds `ontimeByTrip`, `feedVehicle`, `transfers.slack`, and `runtimeBands` (by route, direction and time of day: runs, median and 85th-percentile running time over the timetable, from the per-day running times already kept).
+- **Recommendations** (`web/attention.js`, pure functions with tests): running time to allow (85% of runs, changed when 2+ minutes and 10%), the shift that would make a connection 85% of the time, the timepoint where gaps open on frequent routes (hold at the one before), chronic late or early trips, blocks with several trips not run, faulty GPS units, and congestion by rider-minutes.
+- **Goals:** placeholders in `web/attention.js` (`TARGETS`) until BCT's own are set: on time 80%, trips in full 99%, stops served 99%, predictions 80%, transfers 85%, excess wait ≤ 60 s, stale GPS ≤ 2%, timetable-only ≤ 5%. Chips say "meets goal", "just short (could be noise)" or "misses goal".
+- **Sample sizes:** 95% Wilson ranges on headline shares; timepoints and transfer pairs under 20 samples left out of lists (kept in the CSV); week-on-week coloured only when a two-proportion test (or Poisson, for events) says it's real.
+- **Needs attention tab** (first, and the default): nine lists, top 5 each, every item clickable. Also in the tabs: running time to allow (Schedule, one route), "To fix" (a hub's connections), where gaps open (Headways, one route), rider-minutes (Speeds), GPS units to check (Feed).
+- **Not built:** the daily digest (not wanted for now).
+- **Cloudflare:** no new requests; rows read and written unchanged (the new counts ride in each day's existing row, adding roughly 100 KB a day, far under the 2 MB row limit).
+- **Checked:** every tab rendered in the browser against a week of local recording and the rebuilt timetable; lists 3, 4, 5 and 8 fill in over the days after Nov 3, 2026. Week-on-week colouring needs two weeks of recording to see.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---
@@ -591,7 +610,8 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 | `scripts/build-static.mjs` | BCT GTFS zip → `public/data/<folder>/…`, including the compact `schedule.json` | ✅ 44 routes, 5,981 trips, 4,793 stops, 166 shapes; schedule 1.9 MB (148 KB gzipped) |
 | `scripts/build-site.mjs` | Assembles `_site/` for GitHub Pages and writes `runtime-config.js` | ✅ served under a subpath against a local Worker |
 | `web/live.js` | Live snapshot (bearing, speed, delay, joins), stop departure boards, trip timelines, alerts, in the browser | ✅ against live feeds, plus 9 tests in `test/departures.test.mjs` and `test/schedule.test.mjs` |
-| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit and late starts, delay by timepoint, transfers at hubs, feed quality | ✅ 11 tests; recording live; `/api/service` checked in Node and `wrangler dev` |
+| `web/attention.js` | Needs attention: goals, ± ranges, significance tests, and the recommendations (running time, transfer shifts, holding points, chronic trips, blocks not run, GPS units, congestion by riders) | ✅ 7 tests; checked in the browser |
+| `server/service.mjs` | Service delivered, prediction accuracy, headways, schedule fit and late starts, delay by timepoint, transfers at hubs, feed quality | ✅ 15 tests; recording live; `/api/service` checked in Node and `wrangler dev` |
 | `server/segments.mjs`, `web/speeds.js` | Running times between stops from GPS; speeds, congestion and the map layer | ✅ 9 tests; recorded live and checked in a browser |
 | `server/analytics.mjs`, `server/analytics-log.mjs` | Bunching, cancellations, adherence by weather; the Node server's event log | ✅ 8 tests; checked on live data and in the panel |
 | `web/buses.js`, `web/analytics.js`, `web/csv.js` | Buses table and Analytics panel, with CSV downloads | ✅ checked in a browser at 800 and 1,280 px |

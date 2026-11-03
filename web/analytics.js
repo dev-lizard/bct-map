@@ -1,5 +1,8 @@
 // The Analytics panel. One period (today, 7 or 30 days, or a range of dates within the last 30) and
 // one route (or all) apply to every tab:
+//   Needs attention  what to act on, from every tab: measures short of their goals, blocks not run,
+//                chronic late or early trips, running times and transfers to change, where gaps
+//                open, congestion by riders, GPS units to check, busy stops without shelter
 //   Service      trips delivered, missed without notice, and canceled (/api/service, /api/analytics)
 //   On time      GPS-timed departures at timepoints, by route or by hour (/api/reliability)
 //   Predictions  how close BCT's predicted arrival was, by how far ahead it was made (/api/service)
@@ -21,21 +24,26 @@ import { csvTime, downloadCsv } from './csv.js';
 import { el, formatDate, formatTime, formatWhen, icon, routeBadge } from './dom.js';
 import { sharePct, verdictLabel } from './panel.js';
 import { slowest, SPEED_BANDS, speedFeatures, speedTable } from './speeds.js';
+import {
+  blocksNotRun, chronicTrips, congestionByRiders, gpsUnits, holdingPoints, isContracted, MIN_SAMPLES, ratesDiffer, runtimeAdvice, share,
+  sharesDiffer, TARGETS, TARGETS_ARE_PLACEHOLDERS, transferAdvice, versusGoal,
+} from './attention.js';
 
 const PERIODS = [[1, 'Today'], [7, '7 days'], [30, '30 days'], ['custom', 'Custom']];
 const KEPT_DAYS = 30; // how far back the recorder keeps data (server/range.mjs)
 const TABS = [
-  ['service', 'Service'], ['ontime', 'On time'], ['predictions', 'Predictions'], ['headways', 'Headways'],
+  ['attention', 'Needs attention'], ['service', 'Service'], ['ontime', 'On time'], ['predictions', 'Predictions'], ['headways', 'Headways'],
   ['transfers', 'Transfers'], ['schedule', 'Schedule'], ['speeds', 'Speeds'], ['bunching', 'Bunching'],
   ['weather', 'Weather'], ['trends', 'Trends'], ['shelters', 'Shelters'], ['feed', 'Feed'],
 ];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const SHOW = 15;
-const FEW = 20;
+const FEW = MIN_SAMPLES;
 const DIRECTIONS = ['outbound', 'inbound'];
 
 // routes: [{ routeId, routeShortName, ... }] in display order. route(routeId) -> route info.
-// stopName(id); stop(id) -> { lat, lon, name }; tripInfo(tripId, serviceDate) -> { headsign, start, end, stops }.
+// stopName(id); stop(id) -> { lat, lon, name }; tripInfo(tripId, serviceDate) -> { headsign, start, end,
+// stops, routeId, dir, block, startSecs (seconds into the service day) }.
 // stopPairRoutes() -> Map "from>to" -> route ids. shelterStops() -> [{ id, name, city, routes,
 // amenities, buses (a weekday), riders (boardings a weekday, or null) }]. ridership() -> the week of
 // boardings (web/ridership.json) or null. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
@@ -44,7 +52,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
   let days = 7; // how many days the period covers
   let custom = null; // { from, to } (YYYYMMDD) when the viewer picked dates, else null for the last `days`
   let routeId = null;
-  let tab = 'service';
+  let tab = 'attention';
   let data = null; // { analytics, segments, service } for the period
   let request = 0;
   let speedPeriod = 'all';
@@ -148,7 +156,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     note.textContent = since ? `Recorded from BCT's live feed since ${formatTime(since)} ${sameDay(since) ? 'today' : formatDate(new Date(since * 1000))}.` : '';
     if (!data) return;
     const renderers = {
-      service: renderService, ontime: renderOnTime, predictions: renderPredictions, headways: renderHeadways, transfers: renderTransfers,
+      attention: renderAttention, service: renderService, ontime: renderOnTime, predictions: renderPredictions, headways: renderHeadways, transfers: renderTransfers,
       schedule: renderSchedule, speeds: renderSpeeds, bunching: renderBunching, weather: renderWeather, trends: renderTrends, shelters: renderShelters, feed: renderFeed,
     };
     const parts = renderers[tab]();
@@ -184,6 +192,161 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
   };
   const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/New_York' }).replaceAll('-', '');
 
+  // "±1.2 pts": the 95% range of a share (k of n), so a reader can tell a real difference from noise.
+  const plusMinus = (k, n) => {
+    const r = share(k, n);
+    return r ? el('span', { className: 'status an-pm', title: `95% range: ${r.lo}–${r.hi}%. With ${n.toLocaleString('en-US')} counted, a figure inside this range could be the same performance on another week.` }, ` ±${r.pm} pts`) : null;
+  };
+  // How a measure stands against its goal (TARGETS in web/attention.js), in words as well as colour.
+  const goalChip = (key, value, range = null) => {
+    const t = TARGETS[key];
+    const status = versusGoal(key, value, range);
+    if (!status) return null;
+    const goal = `${t.better > 0 ? '≥' : '≤'} ${t.unit === 's' ? seconds(t.goal) : `${t.goal}%`}`;
+    const text = { met: 'meets goal', close: 'just short of goal (could be noise)', missed: 'misses goal' }[status];
+    return el('span', { className: `an-goal an-goal-${status}`, title: `Goal ${goal}${TARGETS_ARE_PLACEHOLDERS ? ' (a placeholder until BCT\'s own targets are set, in web/attention.js)' : ''}` }, `${status === 'met' ? '✓ ' : ''}${text} ${goal}`);
+  };
+  // About how many riders board a route's trip starting at that hour on a weekday (fare-box week).
+  const ridersAt = (id, hour) => ridership()?.perTrip[id]?.weekday?.[hour] ?? null;
+  const ridersPerTrip = id => {
+    const hours = (ridership()?.perTrip[id]?.weekday ?? []).filter(x => x != null);
+    return hours.length ? hours.reduce((a, b) => a + b, 0) / hours.length : null;
+  };
+  const clockOf = secs => (secs == null ? '' : formatTime(Date.UTC(2026, 0, 5, 5) / 1000 + secs)); // a winter day: EST, no DST jump
+  const blockText = info => (info?.block ? ` · block ${info.block}` : '');
+  const tripLabel = (tripId, info = tripInfo(tripId, null)) => `${clockOf(info?.startSecs)} to ${info?.headsign ?? tripId}${blockText(info)}`;
+  const contractedNote = id => (isContracted(route(id)?.routeShortName) ? ' · contracted route' : '');
+
+  // ---- Needs attention -----------------------------------------------------------------------------
+
+  // One list of what to act on, from every tab, each item with who runs it and what to change.
+  // Everything comes from data the panel already loaded (no extra requests).
+  function renderAttention() {
+    const s = data.service;
+    if (s.error) return failed('service data', s.error);
+    const a = data.analytics;
+    const mine = id => !routeId || id === routeId;
+    const sections = [];
+    const item = (title, detail, onClick, tip = '') => {
+      const b = el(onClick ? 'button' : 'div', { className: 'an-item', ...(onClick ? { type: 'button' } : {}), title: tip }, el('span', { className: 'an-item-title' }, ...[].concat(title)), el('span', { className: 'status' }, ...[].concat(detail)));
+      if (onClick) b.addEventListener('click', onClick);
+      return b;
+    };
+    const openTab = (next, id = routeId) => () => {
+      tab = next;
+      setRoute(id);
+    };
+    const emptyLists = new Set();
+    const section = (id, title, intro, items) => {
+      if (!items.length) {
+        emptyLists.add(id);
+        return;
+      }
+      sections.push(el('h4', {}, `${title} (${items.length})`), el('p', { className: 'status' }, intro), ...items.slice(0, shown[id] ?? 5), moreButton(id, items.length, 5));
+    };
+
+    // 1. Measures short of their goals.
+    const goals = goalStandings().filter(g => g.status !== 'met');
+    section('att-goals', 'Short of goal', `Measures for ${routeText()}, ${periodText()}, against their goals${TARGETS_ARE_PLACEHOLDERS ? ' (placeholders until BCT\'s own targets are set)' : ''}. "Could be noise" means the goal is inside the figure's 95% range.`,
+      goals.map(g => item([el('strong', {}, g.label), ` ${g.text}`], [goalChip(g.key, g.value, g.range), g.n ? ` · ${g.n.toLocaleString('en-US')} counted` : ''], openTab(TARGETS[g.key].tab))));
+
+    // 2. Blocks with several trips not run: a bus or operator that never went out.
+    const notRunTrips = [...(s.delivered.missed ?? []), ...(a.cancellations?.notRun ?? [])].filter(t => mine(t.routeId)).map(t => ({ tripId: t.tripId, date: t.date, routeId: t.routeId }));
+    const blocks = blocksNotRun(notRunTrips, id => tripInfo(id, null)?.block);
+    section('att-blocks', 'Blocks not run', 'Blocks (the run of trips one bus works) with two or more trips no bus ran on the same day, missed without notice or canceled. Several on one block points at a bus or operator that never went out: a matter for dispatch.',
+      blocks.map(b => {
+        const riders = b.trips.reduce((t, x) => t + (ridersAt(x.routeId, Math.floor((tripInfo(x.tripId, null)?.startSecs ?? 0) / 3600) % 24) ?? 0), 0);
+        return item([`Block ${b.block} · ${dateLabel(b.date)}: `, el('strong', {}, `${b.trips.length} trips not run`)], [...b.routeIds.map(id => routeBadge(route(id))), `${riders ? ` about ${Math.round(riders)} riders` : ''}${b.routeIds.map(contractedNote).find(Boolean) ?? ''}`], () => onTrip(b.trips[0].tripId, b.date));
+      }));
+
+    // 3. Trips late or early at most timepoints on most days.
+    const chronic = chronicTrips(s.ontimeByTrip).map(c => ({ ...c, info: tripInfo(c.tripId, null) })).filter(c => c.info && mine(c.info.routeId))
+      .map(c => ({ ...c, riders: ridersAt(c.info.routeId, Math.floor((c.info.startSecs ?? 0) / 3600) % 24) }))
+      .sort((x, y) => (y.riders ?? 0) * y.sharePct - (x.riders ?? 0) * x.sharePct || y.sharePct - x.sharePct);
+    section('att-chronic', 'Trips late or early again and again', `Scheduled trips that left half or more of their timepoints 5+ minutes late, or 30% or more 1+ minute early, over at least 3 days (${periodText()}). Early is within the operator's control; repeated lateness usually means the trip's running time or the one before it.`,
+      chronic.map(c => item([routeBadge(route(c.info.routeId)), ` ${tripLabel(c.tripId, c.info)}`], [el('strong', { className: c.kind }, `${c.kind} at ${c.sharePct}% of timepoints`), ` · ${c.days} days${c.riders ? ` · about ${Math.round(c.riders)} riders a trip` : ''}${contractedNote(c.info.routeId)}`], () => onTrip(c.tripId, null))));
+
+    // 4. Running times to change.
+    const bands = runtimeAdvice(s.runtimeBands).filter(b => mine(b.routeId));
+    section('att-runtime', 'Running times to change', 'Route, direction and time-of-day bands where the timetable should allow what 85% of runs take (the usual rule), and that differs by 2+ minutes and 10%+ of the trip.',
+      bands.map(b => item([routeBadge(route(b.routeId)), ` ${DIRECTIONS[b.dir] ?? ''}, ${periodLabel(b.period).toLowerCase()}: `, el('strong', { className: b.changeS > 0 ? 'late' : 'early' }, `${b.changeS > 0 ? 'add' : 'cut'} ${Math.round(Math.abs(b.changeS) / 60)} min`)],
+        `timetable ${Math.round(b.timetabledS / 60)} min; 85% of ${b.runs} runs took up to ${Math.round(b.p85S / 60)}${contractedNote(b.routeId)}`, openTab('schedule', b.routeId))));
+
+    // 5. Connections worth retiming.
+    const hubName = new Map(s.transfers.hubs.map(h => [h.id, h.name]));
+    const retime = transferAdvice(s.transfers.slack, { goal: TARGETS.transfers.goal, minTransferMin: s.rules.minTransferS / 60 }).filter(f => !routeId || f.from === routeId || f.to === routeId);
+    section('att-transfers', 'Connections to retime', `Timetabled connections at hubs made by fewer than ${TARGETS.transfers.goal}% of riders, and how many minutes later the second bus would have to leave to reach that (from how long riders really had; counted from Nov 3, 2026). Holding a bus delays the riders on it, so weigh both routes.`,
+      retime.map(f => item([`${hubName.get(f.hubId) ?? f.hubId}: `, routeBadge(route(f.from)), ' → ', routeBadge(route(f.to)), ` ${f.madePct}% made`], [el('strong', {}, `leave ${f.shiftMin} min later → ${f.madeAfterPct}%`), ` · ${f.tries} tries`], () => {
+        hubId = f.hubId;
+        openTab('transfers')();
+      })));
+
+    // 6. Where gaps between buses open (holding points).
+    const holds = holdingPoints(s.headways.byStop, s.delays).filter(h => mine(h.routeId));
+    section('att-holds', 'Where gaps open on frequent routes', 'The first timepoint along each frequent route where buses arrive unevenly enough to add a minute or more to riders\' average wait. Holding buses to the timetable at the timepoint before usually evens them out.',
+      holds.map(h => item([routeBadge(route(h.routeId)), ` ${DIRECTIONS[h.dir] ?? ''}: gaps open by ${stopName(h.stopId) ?? h.stopId}`], [el('strong', { className: 'late' }, `${signed(h.excessS)} excess wait`), h.holdAt ? ` · hold at ${stopName(h.holdAt) ?? h.holdAt}` : ' · from the start of the line', ` · ${h.gaps} gaps`], openTab('headways', h.routeId))));
+
+    // 7. Congestion, by rider-minutes.
+    if (!data.segments.error) {
+      const segs = speedTable(data.segments, { period: 'all', stop, routes: stopPairRoutes() }).segments.filter(x => !routeId || x.routes.includes(routeId));
+      const worst = (ridership() ? congestionByRiders(segs, ridersPerTrip) : segs.filter(x => x.lostPerDayS > 0)).slice(0, 25);
+      section('att-congestion', 'Congestion costing riders the most', 'Stretches where buses lose the most time against their best time of day, weighted by how many riders a bus there carries: candidates for signal priority, queue jumps or bus lanes.',
+        worst.map(x => item(`${x.fromName} → ${x.toName}`, [...x.routes.slice(0, 3).map(id => routeBadge(route(id))), ` ${minutesText(x.lostPerDayS)} of bus time a day${x.riderMinutes != null ? ` · about ${x.riderMinutes.toLocaleString('en-US')} rider-minutes` : ''}`], () => onStop(x.from))));
+    }
+
+    // 8. GPS units to check.
+    if (!routeId) {
+      const units = gpsUnits(s.feedVehicle, days);
+      const why = { stale: 'stale reports', gaps: 'GPS gaps', vanished: 'vanished mid-trip' };
+      section('att-gps', 'GPS units to check', 'Buses whose GPS reports are often stale, keep going silent, or vanish mid-trip: a maintenance ticket, and the reason some of the other figures miss trips.',
+        units.map(u => item(`Bus ${u.id}`, [el('strong', {}, u.reasons.map(r => why[r]).join(', ')), ` · ${u.stalePct ?? 0}% stale · ${u.gaps} gaps · vanished ${u.vanished}×`], openTab('feed'))));
+    }
+
+    // 9. Busy stops without a shelter.
+    const shelters = shelterStops().filter(x => x.buses > 0 && x.amenities?.surveyed && !x.amenities.have.some(h => h.key === 'shelter') && !/\bterminal\b|transit center/i.test(x.name) && (!routeId || x.routes.includes(routeId)))
+      .sort((x, y) => (y.riders ?? 0) - (x.riders ?? 0) || y.buses - x.buses).filter(x => (x.riders ?? x.buses) >= 100);
+    section('att-shelters', 'Busy stops without a shelter', `Stops with 100+ ${ridership() ? 'riders boarding' : 'buses'} a weekday and no shelter in the county's stop survey.`,
+      shelters.map(x => item(x.name, `${x.riders != null ? `${Math.round(x.riders)} riders` : `${x.buses} buses`} a weekday${x.city ? ` · ${x.city}` : ''}`, () => onStop(x.id))));
+
+    const intro = el('p', { className: 'status' }, `What to act on, ${routeText()}, ${periodText()}, drawn from every tab, most important first within each list. Each item opens what it's about.`);
+    // Lists built from data recorded only since Nov 3, 2026: say so while they're empty.
+    const waiting = [['att-chronic', 'trips late or early again and again (3+ days each)'], ['att-runtime', 'running times to change (10+ runs a band)'], ['att-transfers', 'connections to retime'], ['att-gps', 'GPS units to check']]
+      .filter(([id]) => emptyLists.has(id) && (id !== 'att-gps' || !routeId)).map(([, label]) => label);
+    const note = waiting.length ? el('p', { className: 'status' }, `Nothing yet in: ${waiting.join('; ')}. Recording for these began on Nov 3, 2026, so they may need a few more days.`) : null;
+    return [head('Needs attention', null), intro, ...(sections.length ? sections : [el('p', { className: 'empty' }, 'Nothing needs attention for this route and period, or not enough has been recorded yet.')]), note];
+  }
+
+  // Every measure with a goal, for the period and route: { key, label, value, text, range, n, status }.
+  function goalStandings() {
+    const s = data.service;
+    const out = [];
+    const push = (key, value, text, k = null, n = null) => {
+      if (value == null) return;
+      const range = k != null && n ? share(k, n) : null;
+      out.push({ key, label: TARGETS[key].label, value, text, range, n, status: versusGoal(key, value, range) });
+    };
+    const pctText = (k, n) => `${rate(k, n)}%`;
+    // On time, from the daily on-time counts (route -> [departures, early, late, Σ delay]).
+    const ot = sumArrays(s.daily.flatMap(d => Object.entries(d.ontime).filter(([id]) => !routeId || id === routeId).map(([, v]) => v)));
+    if (ot?.[0]) push('onTime', rate(ot[0] - ot[1] - ot[2], ot[0]), pctText(ot[0] - ot[1] - ot[2], ot[0]), ot[0] - ot[1] - ot[2], ot[0]);
+    const del = s.delivered.byRoute.filter(r => !routeId || r.routeId === routeId).reduce((t, r) => [t[0] + r.operated, t[1] + r.scheduled - r.unknown, t[2] + (r.stopsServed ?? 0), t[3] + (r.stops ?? 0)], [0, 0, 0, 0]);
+    if (del[1]) push('delivered', rate(del[0], del[1]), pctText(del[0], del[1]), del[0], del[1]);
+    if (del[3]) push('stopsServed', rate(del[2], del[3]), pctText(del[2], del[3]), del[2], del[3]);
+    const pr = sumArrays(Object.entries(s.predictions.byRoute).filter(([id]) => !routeId || id === routeId).flatMap(([, b]) => Object.values(b)));
+    if (pr?.[0]) push('predictions', rate(pr[2], pr[0]), pctText(pr[2], pr[0]), pr[2], pr[0]);
+    const tr = sumArrays(Object.values(s.transfers.byHub).flatMap(pairs => Object.entries(pairs).filter(([pair]) => !routeId || pair.split('>').includes(routeId)).map(([, v]) => v)));
+    if (tr?.[0]) push('transfers', rate(tr[1], tr[0]), pctText(tr[1], tr[0]), tr[1], tr[0]);
+    const hw = sumArrays(Object.entries(s.headways.byPeriod).filter(([k]) => !routeId || k.startsWith(`${routeId}|`)).map(([, v]) => v));
+    const excess = hw ? excessOf(hw) : null;
+    if (excess != null) push('excessWait', excess, signed(excess));
+    if (!routeId) {
+      const f = s.feed.byDate.reduce((t, d) => [t[0] + (d.stale ?? 0), t[1] + (d.reports ?? 0), t[2] + (d.timetableOnly ?? 0), t[3] + (d.predictedTrips ?? 0)], [0, 0, 0, 0]);
+      if (f[1]) push('staleGps', rate(f[0], f[1]), pctText(f[0], f[1]), f[0], f[1]);
+      if (f[3]) push('timetableOnly', rate(f[2], f[3]), pctText(f[2], f[3]), f[2], f[3]);
+    }
+    return out;
+  }
+
   // ---- Service delivered -------------------------------------------------------------------------
 
   function renderService() {
@@ -198,7 +361,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const tripRow = (m, note, className) => {
       const info = tripInfo(m.tripId, m.date);
       const b = el('button', { type: 'button', className: 'an-event an-canceled' },
-        el('span', { className: 'an-when' }, formatWhen(m.start)), routeBadge(route(m.routeId)), el('span', {}, info?.headsign ?? m.tripId, el('span', { className: `status ${className}` }, ` · ${note}`)));
+        el('span', { className: 'an-when' }, formatWhen(m.start)), routeBadge(route(m.routeId)), el('span', {}, info?.headsign ?? m.tripId, el('span', { className: `status ${className}` }, `${blockText(info)} · ${note}`)));
       b.title = 'Open this trip\'s timetable';
       b.addEventListener('click', () => onTrip(m.tripId, m.date));
       return b;
@@ -221,9 +384,9 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ], d.byRoute.length)),
       // Until the recorder has watched some trips from start to finish, a percentage would mislead.
       t.operated + t.partial + t.missed > 0
-        ? el('p', { className: 'an-stat' }, el('strong', {}, pct(t.operated, judged)), ` of ${judged.toLocaleString('en-US')} scheduled trips ran in full (${routeText()}, ${periodText()})`)
+        ? el('p', { className: 'an-stat' }, el('strong', {}, pct(t.operated, judged)), plusMinus(t.operated, judged), ` of ${judged.toLocaleString('en-US')} scheduled trips ran in full (${routeText()}, ${periodText()}) `, goalChip('delivered', rate(t.operated, judged), share(t.operated, judged)))
         : el('p', { className: 'empty' }, 'Not enough recording yet: a trip is judged once the recorder has watched its whole run and it has been over for half an hour.'),
-      t.stops > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Stops served'), el('strong', {}, `${rate(t.stopsServed, t.stops)}%`), el('span', { className: 'status' }, `of ${t.stops.toLocaleString('en-US')} stop visits promised`)),
+      t.stops > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Stops served'), el('strong', {}, `${rate(t.stopsServed, t.stops)}%`), el('span', { className: 'status' }, `of ${t.stops.toLocaleString('en-US')} stop visits promised `, goalChip('stopsServed', rate(t.stopsServed, t.stops), share(t.stopsServed, t.stops)))),
       ...ridersNotRun(missed),
       t.waitN > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Extra wait from trips not run'), el('strong', {}, `+${seconds(Math.round(t.waitS / t.waitN))}`), el('span', { className: 'status' }, `on average, ${t.waitN} ${t.waitN === 1 ? 'trip' : 'trips'}; ${t.waitS >= 5400 ? `${Math.round(t.waitS / 360) / 10} hours` : minutesText(t.waitS)} in all`)),
       el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} in full · ${t.partial} only partly · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
@@ -345,10 +508,10 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const ranOpen = shown.canceledRan != null;
     return [
       head(`Canceled trips (${counts.trips})`, csvButton(`broward-cancellations-${slug()}.csv`, () => [
-        ['service_date', 'route', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened', 'trip_stops', 'pct_of_stops_run'],
+        ['service_date', 'route', 'block', 'trip_id', 'destination', 'scheduled_start', 'first_marked_canceled', 'last_marked_canceled', 'back_on_schedule', 'buses_assigned', 'stops_seen_by_gps', 'gps_first_seen', 'gps_last_seen', 'bct_predicted_start', 'alerts', 'what_happened', 'trip_stops', 'pct_of_stops_run'],
         ...records.map(r => {
           const info = tripInfo(r.tripId, r.date);
-          return [r.date, route(r.routeId).routeShortName, r.tripId, info?.headsign, csvTime(info?.start), csvTime(r.firstSeenAt), csvTime(r.lastSeenAt), csvTime(r.restoredAt),
+          return [r.date, route(r.routeId).routeShortName, info?.block ?? '', r.tripId, info?.headsign, csvTime(info?.start), csvTime(r.firstSeenAt), csvTime(r.lastSeenAt), csvTime(r.restoredAt),
             r.vehicles.join(' '), r.stopsPassed, csvTime(r.firstPassAt), csvTime(r.lastPassAt), csvTime(r.predictedStartAt),
             r.alerts.map(a => [a.header, a.description].filter(Boolean).join(': ')).join(' | '), verdictLabel(r, info?.stops), info?.stops, info?.stops ? sharePct(r, info.stops) : ''];
         }),
@@ -387,6 +550,8 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     if (d.error) return failed('on-time data', d.error);
     const intro = el('p', { className: 'status' }, `Departures from timepoints, timed from bus GPS as the bus pulls away. BCT's rule: 1 minute or more early is early, 5 minutes or more late is late. ${d.samples.toLocaleString('en-US')} ${d.samples === 1 ? 'departure' : 'departures'}, ${routeText()}, ${periodText()}.`);
     const total = el('div', { className: 'rel-row rel-total' }, el('strong', {}, routeId ? 'All day' : 'All'), stackedBar(d), el('strong', { className: 'rel-pct' }, pct(d)));
+    const onTimeK = Math.round((d.samples * (d.onTimePct ?? 0)) / 100);
+    const againstGoal = d.samples ? el('p', { className: 'status' }, `${d.onTimePct}% on time`, plusMinus(onTimeK, d.samples), ' ', goalChip('onTime', d.onTimePct, share(onTimeK, d.samples))) : null;
     const csv = csvButton(`broward-on-time-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => (routeId
       ? [['hour', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'over_10_min_late_pct', 'mean_delay_s', 'mean_lateness_of_late_s'], ...d.byHour.map(h => [h.hour, h.samples, h.onTimePct, h.earlyPct, h.latePct, h.veryLatePct, h.meanDelayS, h.meanLateS])]
       : [['route', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'over_10_min_late_pct', 'mean_delay_s', 'mean_lateness_of_late_s', 'worst_hour', 'worst_hour_on_time_pct'], ...d.routes.map(r => [route(r.routeId).routeShortName, r.samples, r.onTimePct, r.earlyPct, r.latePct, r.veryLatePct, r.meanDelayS, r.meanLateS, r.worstHour?.hour ?? '', r.worstHour?.onTimePct ?? ''])]), d.samples);
@@ -405,7 +570,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const any = sv && mineOrAll(sv.anyStop);
     const arr = sv && mineOrAll(sv.arrival);
     const kv = (label, value, note) => el('div', { className: 'an-kv' }, el('span', {}, label), el('strong', {}, value), el('span', { className: 'status' }, note));
-    return [head('On time', csv), intro, total, legend(),
+    return [head('On time', csv), intro, total, againstGoal, legend(),
       ...riderWeightedOnTime(d, kv),
       d.latePct != null && kv('More than 10 min late', `${d.veryLatePct}%`, d.meanLateS != null ? `late buses averaged ${signed(d.meanLateS)}` : ''),
       any?.[0] && Object.assign(kv('Left any stop early', `${rate(any[1], any[0])}%`, `of ${any[0].toLocaleString('en-US')} departures, at every stop`), {
@@ -486,6 +651,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         ...s.buckets.map((info, i) => { const b = buckets[i]; return [info.label, b[0], accuracy(b), share(b[3], b), share(b[4], b), share(b[5], b), meanMiss(b), b[6]]; }),
       ], n)),
       el('p', { className: 'status' }, `BCT's predicted arrival at each timepoint, checked against when GPS saw the bus arrive. Accurate: the bus came no more than 1 minute before the prediction or 3 minutes after. Early arrivals matter most: riders following the prediction miss the bus. ${n.toLocaleString('en-US')} predictions, ${routeText()}, ${periodText()}.${asides ? ` ${asides}` : ''}`),
+      n > 0 && el('p', { className: 'an-stat' }, el('strong', {}, `${accuracy(total)}%`), plusMinus(total[2], n), ' accurate overall ', goalChip('predictions', accuracy(total), share(total[2], n))),
       el('div', { className: 'rel-legend an-legend' }, ...[['early', 'Bus came early'], ['onTime', 'Accurate'], ['late', 'Bus came late'], ['never', 'Bus never came']].map(([k, label]) => el('span', {}, el('span', { className: `rel-swatch rel-${k}` }), label))),
       el('h4', {}, 'By how far ahead the prediction was made'),
       ...bucketRows,
@@ -534,8 +700,11 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       }),
     ], Object.keys(s.headways.byStop).length);
     if (!lines.length) return [head('Headways', csv), intro, el('p', { className: 'empty' }, `No frequent service measured for ${routeText()} ${periodText()} yet.`)];
+    const network = excessOf(merge(lines.flatMap(l => Object.values(l.periods))));
+    const overall = network == null ? null : el('p', { className: 'an-stat' }, el('strong', {}, signed(network)), ` excess wait (${routeText()}, ${periodText()}) `, goalChip('excessWait', network));
+    const holds = holdingPoints(s.headways.byStop, s.delays);
     if (!routeId) {
-      return [head('Headways', csv), intro, el('h4', {}, 'Excess wait by route and direction (worst first)'),
+      return [head('Headways', csv), intro, overall, el('h4', {}, 'Excess wait by route and direction (worst first)'),
         table('headway-routes', [
           { key: 'route', label: 'Route', value: l => route(l.routeId).order ?? 999, render: l => el('span', {}, routeBadge(route(l.routeId)), ` ${DIRECTIONS[l.dir] ?? ''}`) },
           { key: 'excess', label: 'Excess wait', num: true, value: l => l.excess ?? -1, render: l => (l.excess == null ? '–' : signed(l.excess)) },
@@ -543,12 +712,16 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
           { key: 'n', label: 'Gaps', num: true, value: l => l.n },
         ], lines, { sort: { key: 'excess', dir: -1 }, onRow: l => setRoute(l.routeId) })];
     }
-    const parts = [head('Headways', csv), intro];
+    const parts = [head('Headways', csv), intro, overall];
     for (const l of lines.sort((a, b) => a.dir - b.dir)) {
+      const hold = holds.find(h => h.routeId === l.routeId && h.dir === l.dir);
       parts.push(el('h4', {}, `${DIRECTIONS[l.dir] ?? 'Direction'}: ${l.excess == null ? '–' : signed(l.excess)} excess wait (average ${seconds(l.actual)} against ${seconds(l.scheduled)} timetabled)`));
       const periodRows = Object.entries(l.periods).map(([p, v]) => ({ p: Number(p), w: ewt(v) })).filter(x => x.w).sort((a, b) => a.p - b.p);
       parts.push(...periodRows.map(({ p, w }) => el('div', { className: 'an-kv' }, el('span', {}, periodLabel(p)), el('span', { className: excessClass(w.actual - w.scheduled) }, signed(Math.round(w.actual - w.scheduled))), el('span', { className: 'status' }, `${w.n} gaps`))));
-      const stopRows = Object.entries(s.headways.byStop).filter(([k]) => k.startsWith(`${l.routeId}|${l.dir}|`)).map(([k, v]) => ({ stopId: k.split('|')[2], w: ewt(v) })).filter(x => x.w);
+      if (hold) parts.push(el('p', { className: 'status an-advice' }, 'Gaps open by ', stopLink(hold.stopId), ` (${signed(hold.excessS)} excess wait). `, hold.holdAt ? el('span', {}, 'Holding buses to the timetable at ', stopLink(hold.holdAt), ', the timepoint before, would even them out.') : 'It\'s the first timepoint: look at departures from the start of the line.'));
+      const allStops = Object.entries(s.headways.byStop).filter(([k]) => k.startsWith(`${l.routeId}|${l.dir}|`)).map(([k, v]) => ({ stopId: k.split('|')[2], w: ewt(v) })).filter(x => x.w);
+      const stopRows = allStops.filter(x => x.w.n >= FEW);
+      if (allStops.length > stopRows.length) parts.push(el('p', { className: 'status' }, `${allStops.length - stopRows.length} ${allStops.length - stopRows.length === 1 ? 'timepoint' : 'timepoints'} with fewer than ${FEW} gaps left out (too few to tell; they're in the CSV). A longer period adds more.`));
       parts.push(table(`headway-stops-${l.dir}`, [
         { key: 'stop', label: 'Timepoint', value: x => stopName(x.stopId) ?? x.stopId, render: x => stopLink(x.stopId) },
         { key: 'excess', label: 'Excess', num: true, value: x => x.w.actual - x.w.scheduled, render: x => signed(Math.round(x.w.actual - x.w.scheduled)) },
@@ -584,7 +757,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     if (!rows.length) return [head('Transfers', csv), intro, el('p', { className: 'empty' }, `No connections measured for ${routeText()} ${periodText()} yet. Both buses have to be seen at the hub by GPS.`)];
     const hub = rows.find(h => h.id === hubId);
     const parts = [head('Transfers', csv), intro,
-      el('p', { className: 'an-stat' }, el('strong', {}, `${Math.round((1000 * all[1]) / all[0]) / 10}%`), ` of ${all[0].toLocaleString('en-US')} timetabled connections were made (${routeText()}, ${periodText()})`)];
+      el('p', { className: 'an-stat' }, el('strong', {}, `${Math.round((1000 * all[1]) / all[0]) / 10}%`), plusMinus(all[1], all[0]), ` of ${all[0].toLocaleString('en-US')} timetabled connections were made (${routeText()}, ${periodText()}) `, goalChip('transfers', rate(all[1], all[0]), share(all[1], all[0])))];
     if (!hub) {
       parts.push(el('h4', {}, 'By hub (worst first; click for its connections)'), table('transfer-hubs', [
         { key: 'name', label: 'Hub', value: h => h.name },
@@ -596,10 +769,12 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     }
     const back = el('button', { type: 'button', className: 'link' }, '← All hubs');
     back.addEventListener('click', () => { hubId = null; render(); });
-    const pairs = Object.entries(byHub[hub.id] ?? {}).filter(([pair]) => touches(pair)).map(([pair, v]) => {
+    const fixes = new Map(transferAdvice({ [hub.id]: s.transfers.slack?.[hub.id] ?? {} }, { goal: TARGETS.transfers.goal, minTransferMin: rules.minTransferS / 60 }).map(f => [`${f.from}>${f.to}`, f]));
+    const allPairs = Object.entries(byHub[hub.id] ?? {}).filter(([pair]) => touches(pair)).map(([pair, v]) => {
       const [from, to] = pair.split('>');
-      return { from, to, n: v[0], made: rate(v[1], v[0]), wait: v[1] ? Math.round(v[2] / v[1]) : null, extra: v[4] ? Math.round(v[3] / v[4]) : null };
+      return { from, to, n: v[0], made: rate(v[1], v[0]), wait: v[1] ? Math.round(v[2] / v[1]) : null, extra: v[4] ? Math.round(v[3] / v[4]) : null, fix: fixes.get(pair) };
     });
+    const pairs = allPairs.filter(x => x.n >= FEW);
     parts.push(back, el('h4', {}, `${hub.name}: ${hub.made}% made`), el('div', { className: 'status' }, 'Stops: ', ...hub.stops.flatMap((id, i) => [i ? ', ' : '', stopLink(id)])),
       table('transfer-pairs', [
         { key: 'from', label: 'From', value: p => route(p.from).order ?? 999, render: p => routeLink(p.from) },
@@ -607,9 +782,10 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'made', label: 'Made', num: true, value: p => p.made, render: p => `${p.made}%${p.n < FEW ? '*' : ''}` },
         { key: 'wait', label: 'Wait', num: true, value: p => p.wait ?? -1, render: p => (p.wait == null ? '–' : seconds(p.wait)) },
         { key: 'extra', label: 'If missed', num: true, value: p => p.extra ?? -1, render: p => (p.extra == null ? '–' : `+${seconds(p.extra)}`) },
+        { key: 'fix', label: 'To fix', num: true, value: p => p.fix?.shiftMin ?? 0, render: p => (p.fix ? `+${p.fix.shiftMin} min → ${p.fix.madeAfterPct}%` : '–') },
         { key: 'n', label: 'Tries', num: true, value: p => p.n },
       ], pairs, { sort: { key: 'made', dir: 1 } }),
-      el('p', { className: 'status' }, `Wait: average time between the two buses when the connection was made. * under ${FEW} connections.`));
+      el('p', { className: 'status' }, `Wait: average time between the two buses when the connection was made. To fix: how many minutes later the second bus would have to leave for ${TARGETS.transfers.goal}% of riders to make it, from how long riders really had (counted from Nov 3, 2026). Holding a bus delays the riders already on it, so check both routes' loads first.${allPairs.length > pairs.length ? ` ${allPairs.length - pairs.length} pairs with fewer than ${FEW} tries are left out (they're in the CSV).` : ''}`));
     return parts;
   }
 
@@ -645,8 +821,11 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ...r, diffPct: Math.round((1000 * (r.a - r.s)) / r.s) / 10, overPct: Math.round((1000 * r.over) / r.n) / 10,
       latePct: r.starts ? Math.round((1000 * r.late) / r.starts) / 10 : null, startDelay: r.starts ? Math.round(r.startSum / r.starts) : null, lost: Math.round((r.a - r.s) / r.n),
     }));
+    const advice = runtimeAdvice(s.runtimeBands);
     if (!routeId) {
-      return [head('Schedule fit', csv), intro, el('h4', {}, 'By route (most often over first)'),
+      return [head('Schedule fit', csv), intro,
+        advice.length > 0 && el('p', { className: 'status an-advice' }, `${advice.length} route, direction and time-of-day ${advice.length === 1 ? 'band needs' : 'bands need'} a running-time change: pick a route to see them, or open Needs attention.`),
+        el('h4', {}, 'By route (most often over first)'),
         table('schedule-routes', [
           { key: 'route', label: 'Route', value: r => route(r.routeId).order ?? 999, render: r => routeBadge(route(r.routeId)) },
           { key: 'overPct', label: '10%+ over', num: true, value: r => r.overPct, render: r => `${r.overPct}%` },
@@ -661,6 +840,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     return [head('Schedule fit', csv), intro,
       r && el('div', { className: 'an-kv' }, el('span', {}, 'Late starts'), el('strong', {}, r.latePct == null ? '–' : `${r.latePct}%`), el('span', { className: 'status' }, r.startDelay == null ? '' : `average start ${signed(r.startDelay)}`)),
       r && el('div', { className: 'an-kv' }, el('span', {}, 'Lost along the way'), el('strong', { className: excessClass(r.lost) }, signed(r.lost)), el('span', { className: 'status' }, `a trip, ${r.n} runs`)),
+      ...runningTimes(),
       ...delayProfile(),
       el('h4', {}, `Trips on route ${route(routeId).routeShortName} (click for the timetable)`),
       table('schedule-trips', [
@@ -670,6 +850,31 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'diff', label: 'vs timetable', num: true, value: t => t.actual - t.scheduled, render: t => el('span', { className: excessClass(t.actual - t.scheduled) }, signed(Math.round(t.actual - t.scheduled))) },
         { key: 'n', label: 'Runs', num: true, value: t => t.n },
       ], mine, { sort: { key: 'start', dir: 1 }, onRow: t => onTrip(t.tripId, null) })];
+  }
+
+  // Running time the timetable should allow on the selected route, by direction and time of day:
+  // enough for 85% of runs, the usual scheduling rule (web/attention.js runtimeAdvice).
+  function runningTimes() {
+    const bands = Object.entries(data.service.runtimeBands ?? {}).filter(([k]) => k.startsWith(`${routeId}|`)).map(([k, [runs, median, p85, wholeS]]) => {
+      const [, dir, period] = k.split('|').map(Number);
+      return { dir, period, runs, wholeS, medianS: Math.round(median * wholeS), p85S: Math.round(p85 * wholeS) };
+    });
+    if (!bands.length) return [];
+    const changes = new Map(runtimeAdvice(data.service.runtimeBands).filter(a => a.routeId === routeId).map(a => [`${a.dir}|${a.period}`, a.changeS]));
+    const mins = sec => `${Math.round(sec / 60)} min`;
+    return [el('h4', {}, 'Running time to allow'),
+      table('runtime-bands', [
+        { key: 'when', label: 'When', value: b => b.dir * 10 + b.period, render: b => `${periodLabel(b.period)}, ${DIRECTIONS[b.dir] ?? ''}` },
+        { key: 'timetabled', label: 'Timetable', num: true, value: b => b.wholeS, render: b => mins(b.wholeS) },
+        { key: 'median', label: 'Typical', num: true, value: b => b.medianS, render: b => mins(b.medianS) },
+        { key: 'p85', label: '85% within', num: true, value: b => b.p85S, render: b => mins(b.p85S) },
+        { key: 'change', label: 'Change', num: true, value: b => changes.get(`${b.dir}|${b.period}`) ?? 0, render: b => {
+          const c = changes.get(`${b.dir}|${b.period}`);
+          return c == null ? (b.runs < 10 ? 'too few runs' : 'keep') : el('strong', { className: c > 0 ? 'late' : 'early' }, `${c > 0 ? 'add' : 'cut'} ${mins(Math.abs(c))}`);
+        } },
+        { key: 'runs', label: 'Runs', num: true, value: b => b.runs },
+      ], bands, { sort: { key: 'when', dir: 1 } }),
+      el('p', { className: 'status' }, 'Whole-trip running time by when trips start. A timetable that allows what 85% of runs take is the usual rule: tighter, and most trips run late; looser, and buses run early or wait at timepoints. Changes under 2 minutes or 10% of the trip are left alone, as is any band with fewer than 10 runs.')];
   }
 
   // Where along the selected route delay builds up: the average delay at each timepoint, in order.
@@ -726,7 +931,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       b.addEventListener('click', () => onStop(s.from));
       return el('div', {}, b, ' ', el('span', { className: 'badges' }, ...s.routes.slice(0, 4).map(routeLink)));
     };
-    const congested = segments.filter(s => s.lostPerDayS > 0).slice(0, shown.congested ?? 10);
+    const congested = (ridership() ? congestionByRiders(segments, ridersPerTrip) : segments.filter(s => s.lostPerDayS > 0)).slice(0, shown.congested ?? 10);
     const slow = slowest(segments, shown.slow ?? 10);
     return [
       head('Bus speeds and congestion', csvButton(`broward-bus-speeds-${speedPeriod}-${slug()}.csv`, () => [
@@ -744,8 +949,9 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
           el('span', { className: 'status' }, ` · ${runs.toLocaleString('en-US')} runs · ${Math.round(lost / 60).toLocaleString('en-US')} bus-minutes a day lost to congestion`))
         : el('p', { className: 'empty' }, 'No runs measured for this time of day yet.'),
       el('p', { className: 'status' }, 'Measured from bus GPS: the time from one stop to the next, including stops along the way. Congestion is time over the same stretch at its fastest time of day. Click a stretch to see its first stop, or a route to narrow everything to it.'),
-      congested.length > 0 && el('h4', {}, 'Where congestion costs the most time'),
-      ...congested.map(s => el('div', { className: 'an-stretch' }, stretch(s), el('div', { className: 'status' }, `${s.mph} mph (${s.baselineMph} at its best) · +${s.extraPerRunS} s a bus · ${minutesText(s.lostPerDayS)} a day`))),
+      congested.length > 0 && el('h4', {}, ridership() ? 'Where congestion costs riders the most time' : 'Where congestion costs the most time'),
+      ...congested.map(s => el('div', { className: 'an-stretch' }, stretch(s), el('div', { className: 'status' }, `${s.mph} mph (${s.baselineMph} at its best) · +${s.extraPerRunS} s a bus · ${minutesText(s.lostPerDayS)} a day${s.riderMinutes != null ? ` · about ${s.riderMinutes.toLocaleString('en-US')} rider-minutes a day` : ''}`))),
+      ridership() && congested.length > 0 && el('p', { className: 'status' }, 'Rider-minutes: bus time lost times the riders a bus on those routes typically carries (boardings per trip, from the fare-box week), a rough stand-in for how full buses are there. It ranks stretches for signal priority or bus lanes.'),
       moreButton('congested', segments.filter(s => s.lostPerDayS > 0).length, 10),
       slow.length > 0 && el('h4', {}, 'Slowest stretches'),
       ...slow.map(s => el('div', { className: 'an-stretch' }, stretch(s), el('div', { className: 'status' }, `${s.mph} mph over ${s.distanceM} m · ${s.runs} runs`))),
@@ -837,7 +1043,10 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         departures: ot?.[0] ?? 0,
         onTime: ot?.[0] ? rate(ot[0] - ot[1] - ot[2], ot[0]) : null,
         delivered: !routeId && del.operated + (del.partial ?? 0) + del.missed ? rate(del.operated, judged) : null,
+        deliveredN: judged,
         predictions: pr?.[0] ? rate(pr[1], pr[0]) : null,
+        predictionsN: pr?.[0] ?? 0,
+        transfersN: d.transfers[0] ?? 0,
         excess: routeId ? null : excessOf(d.headway),
         transfers: !routeId && d.transfers[0] ? rate(d.transfers[1], d.transfers[0]) : null,
         bunching: routeId ? mine(a.bunching?.recent).filter(e => e.date === d.date).length : a.bunching?.byDate?.[d.date] ?? 0,
@@ -919,10 +1128,24 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       const total = w.reduce((t, r) => t + (weight ? r[weight] : 1), 0);
       return total ? w.reduce((t, r) => t + r[key] * (weight ? r[weight] : 1), 0) / total : null;
     };
+    // [label, key, weight (the count behind a share), better, unit]
     const measures = [
-      ['On time', 'onTime', 'departures', 1, '%'], ['Trips ran in full', 'delivered', null, 1, '%'], ['Predictions accurate', 'predictions', null, 1, '%'],
-      ['Transfers made', 'transfers', null, 1, '%'], ['Excess wait', 'excess', null, -1, 's'], ['Bunching a day', 'bunching', null, -1, ''], ['Canceled a day', 'canceled', null, -1, ''],
+      ['On time', 'onTime', 'departures', 1, '%'], ['Trips ran in full', 'delivered', 'deliveredN', 1, '%'], ['Predictions accurate', 'predictions', 'predictionsN', 1, '%'],
+      ['Transfers made', 'transfers', 'transfersN', 1, '%'], ['Excess wait', 'excess', null, -1, 's'], ['Bunching a day', 'bunching', null, -1, ''], ['Canceled a day', 'canceled', null, -1, ''],
     ];
+    // Whether a change is more than day-to-day noise: shares by a two-proportion test on the counts
+    // behind them, events by their daily rates; excess wait (no count to test) by 30 s or more.
+    const pooled = (list, key, weight) => {
+      const w = list.filter(r => r[key] != null);
+      const n = w.reduce((t, r) => t + (r[weight] ?? 0), 0);
+      return [w.reduce((t, r) => t + (r[key] * (r[weight] ?? 0)) / 100, 0), n];
+    };
+    const real = (key, weight, unit) => {
+      if (unit === '%') return sharesDiffer(...pooled(thisWeek, key, weight), ...pooled(lastWeek, key, weight));
+      if (unit === 's') return Math.abs(mean(thisWeek, key) - mean(lastWeek, key)) >= 30;
+      const total = list => list.reduce((t, r) => t + (r[key] ?? 0), 0);
+      return ratesDiffer(total(thisWeek), thisWeek.length, total(lastWeek), lastWeek.length);
+    };
     return [el('h4', {}, custom ? 'The range\'s last 7 days against the 7 before' : 'Last 7 days against the 7 before'), ...measures.map(([label, key, weight, better, unit]) => {
       const now = mean(thisWeek, key, weight);
       const before = mean(lastWeek, key, weight);
@@ -931,7 +1154,8 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       const good = diff * better > 0;
       const fmt = v => (unit === 's' ? seconds(Math.round(v)) : `${Math.round(v * 10) / 10}${unit}`);
       const change = unit === 's' ? signed(Math.round(diff)) : `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${Math.round(Math.abs(diff) * 10) / 10}${unit === '%' ? ' pts' : ''}`;
-      return el('div', { className: 'an-kv' }, el('span', {}, label), el('strong', {}, fmt(now)), el('span', { className: Math.abs(diff) < 0.05 ? 'status' : good ? 'early' : 'late' }, `${change} (was ${fmt(before)})`));
+      const isReal = Math.abs(diff) >= 0.05 && real(key, weight, unit);
+      return el('div', { className: 'an-kv' }, el('span', {}, label), el('strong', {}, fmt(now)), el('span', { className: !isReal ? 'status' : good ? 'early' : 'late', title: isReal ? 'More than day-to-day variation explains.' : 'Within normal day-to-day variation: not a real change yet.' }, `${change} (was ${fmt(before)})${isReal ? '' : ' · within normal variation'}`));
     })].filter(Boolean);
   }
 
@@ -1006,10 +1230,10 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         ? el('div', {}, kv('GPS gaps', String(mineRow.gaps), ''), kv('Vanished mid-trip', String(mineRow.dropouts), ''), kv('Timetable-only predictions', mineRow.timetablePct == null ? '–' : `${mineRow.timetablePct}%`, `of ${mineRow.checks.toLocaleString('en-US')} checks`))
         : el('p', { className: 'empty' }, 'Nothing recorded for this route yet.')),
       el('h4', {}, 'All routes'),
-      kv('Stale GPS reports', `${rate(t.stale, t.reports) ?? 0}%`, `of ${t.reports.toLocaleString('en-US')} reports`),
+      kv('Stale GPS reports', `${rate(t.stale, t.reports) ?? 0}%`, el('span', {}, `of ${t.reports.toLocaleString('en-US')} reports `, goalChip('staleGps', rate(t.stale, t.reports), share(t.stale, t.reports)))),
       kv('GPS gaps', t.gaps.toLocaleString('en-US'), ''),
       kv('Vanished mid-trip', t.dropouts.toLocaleString('en-US'), ''),
-      kv('Timetable-only predictions', `${rate(t.timetableOnly, t.predictedTrips) ?? 0}%`, `of ${t.predictedTrips.toLocaleString('en-US')} checks`),
+      kv('Timetable-only predictions', `${rate(t.timetableOnly, t.predictedTrips) ?? 0}%`, el('span', {}, `of ${t.predictedTrips.toLocaleString('en-US')} checks `, goalChip('timetableOnly', rate(t.timetableOnly, t.predictedTrips), share(t.timetableOnly, t.predictedTrips)))),
       c && kv('Canceled but ran anyway', `${c.ranAnyway} of ${c.total}`, 'trips BCT marked canceled that GPS saw running'),
       dayRows.length > 1 && el('h4', {}, 'By day'),
       dayRows.length > 1 && table('feed-days', [
@@ -1019,6 +1243,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'dropouts', label: 'Vanished', num: true, value: d => d.dropouts },
         { key: 'timetable', label: 'Timetable only', num: true, value: d => rate(d.timetableOnly, d.predictedTrips) ?? -1, render: d => pctCell(rate(d.timetableOnly, d.predictedTrips)) },
       ], dayRows, { sort: { key: 'date', dir: -1 } }),
+      ...gpsUnitList(),
       !routeId && routeRows.length > 0 && el('h4', {}, 'By route (click to narrow)'),
       !routeId && routeRows.length > 0 && table('feed-routes', [
         { key: 'route', label: 'Route', value: x => route(x.routeId).order ?? 999, render: x => routeBadge(route(x.routeId)) },
@@ -1027,6 +1252,22 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'gaps', label: 'Gaps', num: true, value: x => x.gaps },
       ], routeRows, { sort: { key: 'timetablePct', dir: -1 }, onRow: x => setRoute(x.routeId) }),
     ];
+  }
+
+  // Buses whose GPS units look faulty (web/attention.js gpsUnits), for maintenance.
+  function gpsUnitList() {
+    const units = gpsUnits(data.service.feedVehicle, days);
+    if (!units.length) return [];
+    const why = { stale: 'stale reports', gaps: 'GPS gaps', vanished: 'vanished mid-trip' };
+    return [el('h4', {}, `GPS units to check (${units.length})`),
+      el('p', { className: 'status' }, `Buses with 10%+ of reports stale, ${2} or more GPS gaps a day, or vanishing mid-trip twice or more, ${periodText()} (counted from Nov 3, 2026).`),
+      table('gps-units', [
+        { key: 'id', label: 'Bus', value: u => u.id },
+        { key: 'stale', label: 'Stale', num: true, value: u => u.stalePct ?? -1, render: u => pctCell(u.stalePct) },
+        { key: 'gaps', label: 'Gaps', num: true, value: u => u.gaps },
+        { key: 'vanished', label: 'Vanished', num: true, value: u => u.vanished },
+        { key: 'why', label: 'Why', value: u => u.reasons.length, render: u => u.reasons.map(r => why[r]).join(', ') },
+      ], units, { sort: { key: 'why', dir: -1 } })];
   }
 
   const pctCell = (p, n = Infinity) => (p == null ? '–' : `${p}%${n < FEW ? '*' : ''}`);

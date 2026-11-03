@@ -1327,7 +1327,7 @@ function createShell() {
       const first = trip.s.find(r => r[2] != null);
       const last = trip.s.findLast(r => r[2] != null);
       const dayStart = date ? serviceDayStart(date, live.timezone) : null;
-      return { headsign: trip.h, start: date && first ? dayStart + first[2] : null, end: date && last ? dayStart + last[2] : null, stops: trip.s.length };
+      return { headsign: trip.h, start: date && first ? dayStart + first[2] : null, end: date && last ? dayStart + last[2] : null, stops: trip.s.length, routeId: trip.r, dir: trip.d, block: trip.b ?? null, startSecs: first?.[2] ?? null };
     },
     onSettings: changeSettings,
     onOpen(name) {

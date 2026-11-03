@@ -1675,3 +1675,59 @@ button.rel-row:hover {
 .bunch-actions .small-button {
   padding: 4px 8px;
 }
+
+/* Analytics: how a measure stands against its goal, in words; colour only backs up the text. */
+.an-goal {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--panel-muted);
+}
+
+.an-goal-missed {
+  border-color: var(--late);
+  color: var(--late);
+}
+
+.an-pm {
+  font-size: 12px;
+}
+
+/* A recommendation under a tab's figures. */
+.an-advice {
+  padding: 6px 10px;
+  border-left: 3px solid var(--early);
+}
+
+/* Needs attention: one item to act on. */
+.an-item {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.an-item {
+  cursor: pointer;
+}
+
+button.an-item:hover {
+  background: var(--row-hover);
+}
+
+.an-item-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}

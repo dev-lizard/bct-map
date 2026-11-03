@@ -118,7 +118,7 @@ const stopRoutes = new Map();
     let entry = schedule[trip.trip_id];
     if (!entry) {
       entry = schedule[trip.trip_id] = {
-        r: trip.route_id, d: Number(trip.direction_id || 0), h: trip.trip_headsign, sh: trip.shape_id, sv: trip.service_id, s: [],
+        r: trip.route_id, d: Number(trip.direction_id || 0), h: trip.trip_headsign, sh: trip.shape_id, sv: trip.service_id, b: trip.block_id || null, s: [],
       };
     }
     const row = [Number(r[iSeq]), r[iStop], gtfsTimeToSeconds(r[iArr] || r[iDep])];

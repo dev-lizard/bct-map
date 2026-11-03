@@ -3,7 +3,7 @@
 // about 150 KB gzipped against 2 MB for one row per stop call):
 //
 //   { v: 1, meta, calendar, exceptions,
-//     routes: { route_id: { p: [pattern], t: [[trip_id, direction_id, headsign, shape_id, service_id, pattern index, [time deltas]]] } } }
+//     routes: { route_id: { p: [pattern], t: [[trip_id, direction_id, headsign, shape_id, service_id, pattern index, [time deltas], block_id]] } } }
 //
 // A pattern is a trip's stop list, [[stop_sequence, stop_id, 1 if a timepoint else 0]], shared by
 // every trip that makes the same stops. Times are seconds from the service day's start, each stored
@@ -30,7 +30,7 @@ export function packSchedule({ meta, calendar = {}, exceptions = [], trips }) {
       prev = secs;
       return d;
     });
-    route.t.push([tripId, trip.d ?? 0, trip.h ?? null, trip.sh ?? null, trip.sv ?? null, pattern, deltas]);
+    route.t.push([tripId, trip.d ?? 0, trip.h ?? null, trip.sh ?? null, trip.sv ?? null, pattern, deltas, trip.b ?? null]);
   }
   for (const route of Object.values(routes)) delete route.keys;
   return { v: 1, meta, calendar, exceptions, routes };
@@ -41,12 +41,13 @@ class Trip {
   #times;
   #rows = null;
 
-  constructor(routeId, [, d, h, sh, sv], pattern, times) {
+  constructor(routeId, [, d, h, sh, sv, , , b = null], pattern, times) {
     this.r = routeId;
     this.d = d;
     this.h = h;
     this.sh = sh;
     this.sv = sv;
+    this.b = b; // block: the run of trips one bus works through the day (null in timetables built before Nov 2026)
     this.#pattern = pattern;
     this.#times = times;
   }

@@ -260,11 +260,12 @@ table.m tr.hl td { background: var(--m-hover); }
     <h1>The Analytics guide</h1>
     <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Nov 3, 2026 (prediction grading)</span>
+    <span class="updated">Matches the app as of Nov 3, 2026 (Needs attention, goals and ranges)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
     <a href="#controls">The controls</a>
+    <a href="#attention">Needs attention</a>
     <a href="#service">Service</a>
     <a href="#ontime">On time</a>
     <a href="#predictions">Predictions</a>
@@ -293,7 +294,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <div class="with-n"><span class="n">1</span><div class="row-flex" style="flex:1"><div class="seg" style="flex:1;grid-template-columns:repeat(4,1fr)"><span>Today</span><span>7 days</span><span>30 days</span><span class="on">Custom</span></div><span class="m-btn" title="Help">?</span></div><span class="n">5</span></div>
           <div class="with-n"><span class="n">2</span><div class="range-mock"><span class="m-note">First day</span><span class="m-note">Last day</span><span class="select">10/27/2026</span><span class="select">10/28/2026</span></div></div>
           <div class="with-n"><span class="n">3</span><div class="select"><span>All routes</span><span>▾</span></div></div>
-          <div class="with-n"><span class="n">4</span><div class="pills"><span class="on">Service</span><span>On time</span><span>Predictions</span><span>Headways</span><span>Transfers</span><span>Schedule</span><span>Speeds</span><span>Bunching</span><span>Weather</span><span>Trends</span><span>Shelters</span><span>Feed</span></div></div>
+          <div class="with-n"><span class="n">4</span><div class="pills"><span class="on">Needs attention</span><span>Service</span><span>On time</span><span>Predictions</span><span>Headways</span><span>Transfers</span><span>Schedule</span><span>Speeds</span><span>Bunching</span><span>Weather</span><span>Trends</span><span>Shelters</span><span>Feed</span></div></div>
           <div class="m-note">Recorded from BCT's live feed since 2:40 PM Fri, Oct 23.</div>
           <div class="m-head"><h4>Service delivered</h4><span class="with-n" style="flex:none"><span class="m-btn">CSV</span><span class="n">6</span></span></div>
         </div>
@@ -308,7 +309,52 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">6</span><div><strong>CSV.</strong> Downloads that tab's numbers as a spreadsheet file. With Custom dates, the file name says which days.</div></li>
         </ol>
         <p class="callout">Tables sort by any column (click its heading; click again to flip the order). Clicking a row opens what it describes: a route, a stop on the map, or a trip's timetable. Long lists show a "Show all" link.</p>
-        <p class="muted">The note under the tabs says when recording started. Numbers with a <strong>*</strong> are based on fewer than 20 samples, so treat them as rough.</p>
+        <p class="muted">The note under the tabs says when recording started. Numbers with a <strong>*</strong> are based on fewer than 20 samples, so treat them as rough; lists of stops and connections leave those out (they stay in the CSV).</p>
+        <p><strong>Ranges and goals.</strong> Headline percentages carry a range, like <strong>64.9% ±0.9 pts</strong>: with that many counted, another week of the same performance could land anywhere in it, so a smaller difference isn't worth acting on. Beside them a chip says how the figure stands against its goal: <span class="good">✓ meets goal</span>, "just short of goal (could be noise)" when the goal is inside the range, or <span class="late">misses goal</span>. The goals are placeholders (on time 80%, trips run in full 99%, stops served 99%, predictions 80%, transfers 85%, excess wait 60 s or less, stale GPS 2% or less, timetable-only predictions 5% or less) until BCT's own targets replace them.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== NEEDS ATTENTION -->
+  <section class="chapter" id="attention">
+    <div class="chapter-head">
+      <span class="tabname"><span class="tabpill">Needs attention</span></span>
+      <h2>What should someone do about it?</h2>
+      <p>The tab the panel opens on. It gathers what to act on from every other tab into lists, each item saying who runs it (route, block, bus) and what would fix it. Click an item to open what it's about.</p>
+    </div>
+    <div class="pair">
+      <figure class="figure">
+        <span class="example">Example numbers</span>
+        <div class="mock">
+          <div class="m-head"><h4>Needs attention</h4></div>
+          <div class="m-sub"><span class="n sm">1</span>Short of goal (5)</div>
+          <div class="kv"><span class="kv-label"><strong>On time</strong> 64.9%</span><span class="late">misses goal ≥ 80%</span><span class="s">10,363 counted</span></div>
+          <div class="kv"><span class="kv-label"><strong>Transfers made</strong> 84.5%</span><span class="s">just short of goal (could be noise) ≥ 85%</span><span class="s">10,320 counted</span></div>
+          <div class="m-sub"><span class="n sm">2</span>Blocks not run (3)</div>
+          <div class="kv"><span class="kv-label">Block 31-05 · Mon, Nov 2: <strong>6 trips not run</strong></span><span><span class="badge" style="background:#5E9732">31</span></span><span class="s">about 189 riders</span></div>
+          <div class="m-sub"><span class="n sm">3</span>Trips late or early again and again (12)</div>
+          <div class="kv"><span class="kv-label"><span class="badge" style="background:#F16477">18</span> 4:35 PM to Sawgrass · block 18-07</span><span class="late">late at 71% of timepoints</span><span class="s">6 days</span></div>
+          <div class="m-sub"><span class="n sm">4</span>Running times to change (4)</div>
+          <div class="kv"><span class="kv-label"><span class="badge" style="background:#F16477">18</span> outbound, afternoon peak:</span><span class="late">add 6 min</span><span class="s">85% of 48 runs took up to 64</span></div>
+          <div class="m-sub"><span class="n sm">5</span>Connections to retime (3)</div>
+          <div class="kv"><span class="kv-label">West Terminal: <span class="badge" style="background:#0E7C7B">22</span> → <span class="badge" style="background:#7A5195">81</span> 41% made</span><strong>leave 3 min later → 86%</strong><span class="s">64 tries</span></div>
+          <div class="m-sub"><span class="n sm">6</span>Where gaps open · <span class="n sm">7</span>Congestion · <span class="n sm">8</span>GPS units · <span class="n sm">9</span>Shelters</div>
+        </div>
+      </figure>
+      <div class="words">
+        <ol>
+          <li><span class="n">1</span><div><strong>Short of goal:</strong> every measure with a goal that isn't met, for the period and route picked, with its ± range. Click to open its tab.</div></li>
+          <li><span class="n">2</span><div><strong>Blocks not run:</strong> a block is the day's run of trips one bus works. Two or more trips not run on the same block and day (missed without notice, or canceled with no bus seen) usually means a bus or operator never went out: a matter for dispatch.</div></li>
+          <li><span class="n">3</span><div><strong>Trips late or early again and again:</strong> scheduled trips that left half or more of their timepoints 5+ minutes late, or 30% or more 1+ minute early, over at least 3 days. Ranked by riders on that trip. Early is in the operator's control; repeated lateness usually means the trip's running time (see 4).</div></li>
+          <li><span class="n">4</span><div><strong>Running times to change:</strong> by route, direction and time of day, the running time the timetable should allow: what 85% of runs took, the usual scheduling rule. Listed when that differs from the timetable by 2+ minutes and 10% of the trip, from 10+ runs.</div></li>
+          <li><span class="n">5</span><div><strong>Connections to retime:</strong> connections at hubs made by fewer than 85% of riders, and how many minutes later the second bus would have to leave to reach 85%, from how long riders really had. Holding a bus delays the riders already on it, so weigh both routes.</div></li>
+          <li><span class="n">6</span><div><strong>Where gaps open:</strong> on each frequent route, the first timepoint where uneven gaps add a minute or more to riders' wait, and the timepoint before it, where holding buses to the timetable would even them out.</div></li>
+          <li><span class="n">7</span><div><strong>Congestion costing riders the most:</strong> stretches where buses lose the most time against their best time of day, times the riders a bus there typically carries: candidates for signal priority or bus lanes.</div></li>
+          <li><span class="n">8</span><div><strong>GPS units to check:</strong> buses with 10%+ stale reports, 2+ GPS gaps a day, or vanishing mid-trip twice or more: a maintenance ticket.</div></li>
+          <li><span class="n">9</span><div><strong>Busy stops without a shelter:</strong> 100+ riders boarding a weekday and no shelter in the county's survey.</div></li>
+        </ol>
+        <p class="callout">Each list shows its top 5, with "Show all" for the rest. Contracted routes (4, 6, 15, 23 and 56) are marked, since their operations go through the contractor.</p>
+        <p class="muted">Lists 3, 4, 5 and 8 use data recorded from Nov 3, 2026 and fill in over the following days; until then the tab says which are still empty. Everything here comes from data the panel already loads.</p>
       </div>
     </div>
   </section>
@@ -440,6 +486,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">13</span><div><strong>Riders' extra waiting:</strong> those riders times the extra wait for the next bus, added up, in rider-hours. It's the closest single number to how much time riders lost.</div></li>
         </ol>
         <p class="muted">Stops served and extra wait are also columns in the by-route table and the CSV. The rider estimates are averages from one week of boardings (Oct 18–24, 2026), so treat them as approximate.</p>
+        <p><strong>Who ran it:</strong> trips in the "missed" and "only partly" lists show their block (like "block 08-03"), and the canceled trips CSV has a block column, so dispatch can tell a single dropped trip from a bus that never went out (Needs attention groups those). The headline carries its ± range and a goal chip; so does Stops served.</p>
       </div>
     </div>
   </section>
@@ -510,6 +557,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">7</span><div><strong>On time for riders:</strong> the same on-time share, but each route and hour counts by how many people board then (from a week of BCT's fare-box data), not by how many buses leave. A late 5 PM bus on a busy route counts for more than a late 6 AM bus on a quiet one, so this is closer to the share of riders whose bus was on time.</div></li>
         </ol>
         <p class="callout">A route with a big yellow slice runs early too often: its timetable may be too loose, or drivers may be leaving early.</p>
+        <p>Under the "All" bar, a line gives on time with its ± range and how it stands against the goal (80%, a placeholder). Trips late or early again and again are listed in Needs attention.</p>
       </div>
     </div>
   </section>
@@ -579,6 +627,7 @@ table.m tr.hl td { background: var(--m-hover); }
         </ol>
         <p>The note above the bars says how many guesses were for buses that never came, and how many were only the timetable and left out. Hovering a row gives its exact shares and average miss.</p>
         <p class="muted">Only timepoints are graded, since that's where GPS timing is reliable. GPS fixes come about once a minute, so the moment a bus reached the stop is worked out between two fixes. The live Worker checks once a minute, so a short window (like 0–2 minutes) is sometimes skipped for a bus. Days recorded before Nov 3, 2026 were graded the old way: timetable-only guesses were included, buses that never came weren't counted, and some arrivals were timed on departure.</p>
+        <p>A headline above the bars gives accuracy over all distances ahead, with its ± range and against the goal (80%, a placeholder).</p>
       </div>
     </div>
   </section>
@@ -641,6 +690,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">2</span><div><strong>One route:</strong> the excess wait in each part of the day (night, morning peak, midday, afternoon peak, evening), then a table of timepoints, so you can see where along the route the buses bunch up.</div></li>
         </ol>
         <p class="muted">BCT's frequent service is mainly routes 1, 18 and 19, plus some trips on 22, 72 and 114. Other routes won't appear here.</p>
+        <p><strong>Excess wait overall</strong> heads the tab, against a goal of 60 seconds or less (a placeholder). For one route, a highlighted line under each direction says <strong>where gaps open</strong> (the first timepoint with a minute or more of excess wait, from 20+ gaps) and the timepoint before it, where holding buses to the timetable would even them out. Timepoints with fewer than 20 gaps are left out of the table as too few to tell; they're still in the CSV.</p>
       </div>
     </div>
   </section>
@@ -707,6 +757,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">2</span><div><strong>By hub</strong>, worst first, with the average extra wait when a connection is missed. Click a hub to open its pairs.</div></li>
           <li><span class="n">3</span><div><strong>One hub's pairs:</strong> from which route to which, how often it was made, the usual wait between the two buses when made, and the extra wait when missed. Click a route badge to narrow every tab to it. "← All hubs" goes back.</div></li>
         </ol>
+        <p>The headline carries its ± range and a goal chip (85%, a placeholder). In a hub's table, <strong>To fix</strong> says how many minutes later the second bus would have to leave for 85% of riders to make the connection, and what share would then make it (like "+3 min → 86%"), worked out from how long riders really had (recorded from Nov 3, 2026). Pairs with fewer than 20 tries are left out of the table; they're in the CSV.</p>
       </div>
     </div>
   </section>
@@ -808,7 +859,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">2</span><div><strong>Last timepoint seen.</strong> From 1 to 2 is the real running time, compared with the timetable's time for the same stretch.</div></li>
           <li><span class="n">3</span><div><strong>Gaps are allowed, within limits.</strong> The stretch seen must cover at least <strong>80%</strong> of the trip's scheduled time or the trip is left out. The arrival at the very last stop is sometimes missed.</div></li>
         </ol>
-        <p class="muted">A trip is counted once the bus hasn't passed a new stop for 10 minutes.</p>
+        <p class="muted">A trip is counted once its bus has gone 10 minutes without passing any stop or sending a fresh GPS report. Until Nov 3, 2026 only timepoints counted, and since they're usually more than 10 minutes apart, almost no trips were measured; days before then show little or nothing here.</p>
       </div>
     </div>
 
@@ -918,6 +969,15 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">5</span><div><strong>Runs:</strong> times measured. A weekday trip runs up to 5 times in the 7-day view.</div></li>
         </ol>
         <p class="callout">Look for patterns: here the 4:35 and 5:10 PM trips run 10 to 11 minutes over while the rest are close, so the rush-hour timetable needs more time. The CSV has the same per trip, in seconds.</p>
+        <div class="mock"><span class="example">Example numbers</span>
+          <div class="m-sub">Running time to allow (one route)</div>
+          <div class="tablewrap"><table class="m">
+            <thead><tr><th>When</th><th class="num">Timetable</th><th class="num">Typical</th><th class="num">85% within</th><th class="num">Change</th><th class="num">Runs</th></tr></thead>
+            <tbody><tr><td>Afternoon peak, outbound</td><td class="num">58 min</td><td class="num">60 min</td><td class="num">64 min</td><td class="num"><span class="late">add 6 min</span></td><td class="num">48</td></tr>
+            <tr><td>Midday, outbound</td><td class="num">52 min</td><td class="num">51 min</td><td class="num">54 min</td><td class="num">keep</td><td class="num">61</td></tr></tbody>
+          </table></div>
+        </div>
+        <p><strong>Running time to allow</strong> (one route picked): whole-trip running time by direction and time of day. Typical is the median run; "85% within" is what 85% of runs took, the usual rule for setting a timetable. Change says add or cut when that differs from the timetable by 2+ minutes and 10% of the trip, "keep" otherwise, and "too few runs" under 10. With all routes, a line says how many bands need a change. Recorded from Nov 3, 2026, when a bug that cut trips off between timepoints was fixed.</p>
       </div>
     </div>
   </section>
@@ -951,6 +1011,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">4</span><div><strong>Slowest stretches:</strong> the lowest speeds with at least 3 runs, whatever the reason (traffic, a busy stop, a turn).</div></li>
         </ol>
         <p class="muted">Click a stretch to see its first stop on the map, or a route badge to narrow everything to that route. The timetable isn't used as the yardstick here, because BCT's is rounded to the minute and padded around timepoints.</p>
+        <p>With the fare-box week loaded, the congestion list is ranked by <strong>rider-minutes</strong> a day: bus time lost times the riders a bus on those routes typically carries (boardings per trip, a rough stand-in for how full buses are there). It's the order to consider stretches for signal priority, queue jumps or bus lanes.</p>
       </div>
     </div>
   </section>
@@ -1084,6 +1145,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">4</span><div><strong>By day of the week</strong> (once there's more than a week): on-time averaged per weekday, so you can see if Fridays are consistently worse.</div></li>
         </ol>
         <p class="muted">With one route picked, On time, Predictions, Bunching and Canceled follow that route. In full, Excess wait and Transfers are only kept for all routes together, so they show "–". The week-on-week comparison needs two weeks of recording.</p>
+        <p>In "last 7 days against the 7 before", a change is coloured only when it's more than day-to-day variation explains (from the counts behind each share, or each day's events); otherwise it says "within normal variation". Excess wait, which has no count to test, needs a change of 30 seconds or more.</p>
       </div>
     </div>
   </section>
@@ -1152,11 +1214,12 @@ table.m tr.hl td { background: var(--m-hover); }
         <ol>
           <li><span class="n">1</span><div><strong>Stale reports:</strong> GPS positions more than 2 minutes old when BCT published them. The map shows those buses behind where they really are.</div></li>
           <li><span class="n">2</span><div><strong>GPS gaps:</strong> a bus on a trip that went silent for 5+ minutes.</div></li>
-          <li><span class="n">3</span><div><strong>Vanished mid-trip:</strong> GPS lost a bus with 15+ timetabled minutes of its trip still to go. Either the GPS failed or the bus was pulled; the data can't tell which.</div></li>
+          <li><span class="n">3</span><div><strong>Vanished mid-trip:</strong> GPS lost a bus with 15+ timetabled minutes of its trip still to go: for 10 minutes it passed no stop and sent no fresh GPS report. Either the GPS failed or the bus was pulled; the data can't tell which. Counts before Nov 3, 2026 are far too high (most trips were wrongly counted, because timepoints are usually more than 10 minutes apart).</div></li>
           <li><span class="n">4</span><div><strong>Timetable-only predictions:</strong> BCT's prediction for a bus's next stop was exactly the timetable time, so it carried no live information.</div></li>
           <li><span class="n">5</span><div><strong>Canceled but ran anyway:</strong> trips BCT marked canceled that GPS saw running. Riders who trusted the cancellation may have skipped a bus that came.</div></li>
         </ol>
-        <p class="muted">A by-day table (when there's more than one day) and a by-route table follow. Recording gaps (like a restart) are not counted as buses vanishing.</p>
+        <p class="muted">A by-day table (when there's more than one day) and a by-route table follow. Recording gaps (like a restart) and minutes when BCT's vehicle feed failed are not counted as buses vanishing.</p>
+        <p>Stale reports and timetable-only predictions carry goal chips (2% and 5% or less, placeholders). <strong>GPS units to check</strong> lists buses with 10%+ stale reports, 2+ GPS gaps a day, or vanishing mid-trip twice or more (recorded from Nov 3, 2026): Bus, Stale, Gaps, Vanished and Why. Hand it to maintenance.</p>
       </div>
     </div>
   </section>

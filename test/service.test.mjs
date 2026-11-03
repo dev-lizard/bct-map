@@ -87,7 +87,27 @@ test('schedule fit: running time from first to last timepoint seen, once the tri
   log.observe({ passages: [pass('T1', 3, day + 8 * H + 780)], trips, nowS: day + 8 * H + 780 });
   assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 8 * H + 800 }).runtime.byTrip, {}); // not over yet
   log.observe({ trips, nowS: day + 8 * H + 780 + 700 });
-  assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 12 * H }).runtime.byTrip, { T1: ['R1', 1, 720, 600, 1, 1, 60, 0] }); // 12 min against 10: over by 10%+; left 1 min late
+  const s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
+  assert.deepEqual(s.runtime.byTrip, { T1: ['R1', 1, 720, 600, 1, 1, 60, 0] }); // 12 min against 10: over by 10%+; left 1 min late
+  // The morning-peak band for R1 northbound: one run at 1.2× the timetable, of a 10-minute trip.
+  assert.deepEqual(s.runtimeBands, { 'R1|0|1': [1, 1.2, 1.2, 600, 1] });
+  assert.deepEqual(s.ontimeByTrip, { T1: [1, 2, 0, 0] }); // one day, two timepoints, both on time
+});
+
+test('a trip stays open between timepoints far apart, while its bus passes stops or reports GPS', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  // Timepoints A and C 20 minutes apart, ordinary stops every 5 minutes between.
+  const longTrips = { ...trips, LT: { r: 'R1', d: 0, sv: 'WK', s: [[1, 'A', 8 * H, 1], [2, 'B', 8 * H + 300], [3, 'X', 8 * H + 600], [4, 'Y', 8 * H + 900], [5, 'C', 8 * H + 1200, 1]] } };
+  const bus = t => ({ header: { timestamp: t }, entity: [{ id: 'bus', vehicle: { vehicle: { id: 'bus' }, trip: { tripId: 'LT', startDate: '20261022' }, position: { latitude: 26.1, longitude: -80.1 }, timestamp: t } }] });
+  // On time to Y at 8:15, then stuck in traffic, reporting GPS but passing no stop, until C at 8:28.
+  const passAt = { 0: 1, 300: 2, 600: 3, 900: 4, 1680: 5 };
+  for (let t = 0; t <= 1680 + 900; t += 60) {
+    const seq = passAt[t];
+    log.observe({ vehicles: t <= 1680 ? bus(day + 8 * H + t) : { header: { timestamp: day + 8 * H + t }, entity: [] }, passages: seq ? [pass('LT', seq, day + 8 * H + t)] : [], trips: longTrips, nowS: day + 8 * H + t });
+  }
+  const s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
+  assert.deepEqual(s.runtime.byTrip.LT, ['R1', 1, 1680, 1200, 1, 1, 0, 0]); // 28 min against 20, left on time
+  assert.equal(s.feed.byDate[0].dropouts, 0); // it didn't vanish
 });
 
 test('state and days round-trip through storage', () => {
@@ -126,11 +146,12 @@ test('transfers: a timetabled connection at a hub, made or missed by the real ti
     log.setHubs(hubs, sched);
     log.observe({ passages: [pass('T1', 2, day + 8 * H + arrive)], trips: sched.trips, nowS: day + 8 * H + arrive });
     log.observe({ passages: [pass('U1', 1, day + 8 * H + depart)], trips: sched.trips, nowS: day + 8 * H + depart });
-    return log.summary({ days: 1, schedule: sched, nowS: day + 12 * H }).transfers.byHub.P['R1>R2'];
+    const t = log.summary({ days: 1, schedule: sched, nowS: day + 12 * H }).transfers;
+    return [...t.byHub.P['R1>R2'], t.slack.P['R1>R2']];
   };
-  assert.deepEqual(run(660, 840), [1, 1, 180, 0, 0]); // in at 8:11, out at 8:14: made
-  assert.deepEqual(run(840, 900), [1, 0, 0, 900, 1]); // in at 8:14, out at 8:15: missed, 15 more minutes
-  assert.deepEqual(run(960, 900), [1, 0, 0, 900, 1]); // the connection left before the bus came in
+  assert.deepEqual(run(660, 840), [1, 1, 180, 0, 0, { 3: 1 }]); // in at 8:11, out at 8:14: made, with 3 min to spare
+  assert.deepEqual(run(840, 900), [1, 0, 0, 900, 1, { 1: 1 }]); // in at 8:14, out at 8:15: missed, 15 more minutes
+  assert.deepEqual(run(960, 900), [1, 0, 0, 900, 1, { '-1': 1 }]); // the connection left before the bus came in
 });
 
 test('feed quality: stale reports, GPS gaps, timetable-only predictions, and buses that vanish', () => {
@@ -144,10 +165,12 @@ test('feed quality: stale reports, GPS gaps, timetable-only predictions, and bus
   // L1 seen leaving its first timepoint, then nothing, with 30 timetabled minutes to go: it dropped out.
   const longTrips = { ...trips, L1: { r: 'R1', d: 0, sv: 'WK', s: [[1, 'A', 8 * H, 1], [2, 'C', 8 * H + 1800, 1]] } };
   log.observe({ passages: [pass('L1', 1, day + 8 * H + 770)], trips: longTrips, nowS: day + 8 * H + 770 });
-  for (let t = 830; t <= 1500; t += 60) log.observe({ trips: longTrips, nowS: day + 8 * H + t });
+  // The vehicle feed keeps coming, without L1's bus.
+  for (let t = 830; t <= 1500; t += 60) log.observe({ vehicles: { header: { timestamp: day + 8 * H + t }, entity: [] }, trips: longTrips, nowS: day + 8 * H + t });
   const f = log.summary({ days: 1, schedule, nowS: day + 12 * H }).feed;
   assert.deepEqual(f.byDate[0], { date: '20261022', reports: 2, stale: 1, gaps: 1, dropouts: 1, predictedTrips: 2, timetableOnly: 1 });
   assert.deepEqual(f.byRoute.R1, [1, 1, 2, 1]);
+  assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 12 * H }).feedVehicle, { bus1: [2, 1, 1, 0] }); // 2 reports, 1 stale, 1 gap
 });
 
 test('schedule: routes and weekday departures by stop', () => {

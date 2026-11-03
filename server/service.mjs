@@ -22,6 +22,9 @@
 //   - What riders at any stop see: buses leaving any stop (not only timepoints) 1 minute or more
 //     early, and buses reaching the end of their trip on time. Riders board at every stop, and the
 //     ones at the end of the line care when they arrive.
+//   - For acting on it: on time by trip (chronic late or early trips), GPS health by vehicle (units
+//     to check), how much time riders had for each transfer (how far to move a departure), and
+//     running times by route, direction and time of day (what the timetable should allow).
 //   - Stops served and extra waiting: of the stop visits the timetable promised on judged trips, how
 //     many a bus made (a partial trip skipped some), and for each trip not run, how long riders
 //     waited for the next bus that did run.
@@ -57,16 +60,18 @@ const PENDING_MAX_AGE_S = 3 * 3600;
 // canceled the trip, GPS never saw it, and the recorder was watching; otherwise it's dropped.
 const NEVER_CAME_AFTER_S = 30 * 60;
 const HUB_RECENT_S = 60 * 60; // buses at a hub are paired with others seen within this long
-const TRIP_DONE_AFTER_S = 10 * 60; // no new stops passed for this long: the trip is over
+const TRIP_DONE_AFTER_S = 10 * 60; // no stop passed and no fresh GPS report for this long: the trip is over
 const RUNTIME_MIN_SHARE = 0.8; // the stops seen must cover this share of the trip's timetabled time
 const COVERAGE_MIN = 0.9; // share of a trip's minutes the recorder must have run to judge it
 // A trip ran only in part when GPS first saw it this far into its timetable, or last saw it this
 // far before its end.
 export const PARTIAL_S = 15 * 60;
+const SLACK_MAX_MIN = 15; // transfer slack is kept to the minute within ±15 (beyond counts as 15)
 const RECORDING_GAP_S = 180; // the recorder was off for longer than this: don't call trips dropped
 const MAX_LIST = 300;
 
 const periodOf = hour => PERIODS.findIndex(p => hour >= p.from && hour < p.to);
+const round3 = x => Math.round(x * 1000) / 1000;
 const add = (into, values) => values.forEach((v, i) => { into[i] = (into[i] ?? 0) + v; });
 // A graded prediction: [live predictions, Σ |error| s, accurate, bus early, bus late, bus never came,
 // timetable only]. Timetable-only predictions are counted only in the last place, not graded.
@@ -78,6 +83,9 @@ function newDay() {
     seen: new Set(), span: {}, coverage: new Array(1440).fill(0), pred: {}, predHour: {}, headway: {}, headwayStop: {}, runtime: {},
     ontime: {}, delayStop: {}, transfers: {}, feed: Object.fromEntries(FEED_KEYS.map(k => [k, 0])), feedRoute: {},
     anyStop: {}, arrival: {},
+    ontimeTrip: {}, // trip id -> [timepoint departures, early, late]
+    feedVehicle: {}, // vehicle id -> [GPS reports, stale, gaps, vanished mid-trip]
+    transferSlack: {}, // hub id -> "from>to" -> { minutes between arrival and departure (-15..15): connections }
   };
 }
 
@@ -176,11 +184,22 @@ export class ServiceLog {
         if (feedTs - ts > STALE_S) day.feed.stale++;
         const id = e.vehicle.vehicle?.id ?? e.id;
         const prev = this.#lastReport.get(id);
-        if (prev?.[1] === tripId && ts - prev[0] > GPS_GAP_S) {
+        const gap = prev?.[1] === tripId && ts - prev[0] > GPS_GAP_S;
+        if (gap) {
           day.feed.gaps++;
           route[0]++;
         }
         if (!prev || ts > prev[0] || prev[1] !== tripId) this.#lastReport.set(id, [ts, tripId]);
+        const unit = (day.feedVehicle[id] ??= [0, 0, 0, 0]);
+        unit[0]++;
+        if (feedTs - ts > STALE_S) unit[1]++;
+        if (gap) unit[2]++;
+        // A fresh GPS report on the trip shows it's still going, even between stops (in traffic).
+        const tracked = this.#trips.get(tripId);
+        if (tracked) {
+          tracked.bus = id;
+          if (feedTs - ts <= STALE_S) tracked.seenAt = nowS;
+        }
       }
       for (const [id, [ts]] of this.#lastReport) if (nowS - ts > 3600) this.#lastReport.delete(id);
     }
@@ -238,6 +257,10 @@ export class ServiceLog {
         else if (row[2] < seen[0]) seen[0] = row[2];
         else if (row[2] > seen[1]) seen[1] = row[2];
       }
+      // Any stop passed shows the trip is still going: timepoints are often more than
+      // TRIP_DONE_AFTER_S apart (a median of 12 minutes in BCT's timetable).
+      const tracked = this.#trips.get(p.tripId);
+      if (tracked) tracked.seenAt = nowS;
 
       // Prediction outcomes.
       const pending = this.#pending.get(`${p.tripId}|${p.seq}`);
@@ -272,6 +295,7 @@ export class ServiceLog {
       if (Math.abs(delay) <= MAX_PLAUSIBLE_DELAY_S) {
         const day = this.#day(calendarDate);
         add((day.ontime[trip.r] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0, delay]);
+        add((day.ontimeTrip[p.tripId] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0]);
         const firstSecs = trip.s.find(r => r[2] != null)[2];
         add((day.delayStop[`${trip.r}|${trip.d}|${row[1]}`] ??= []), [1, delay, row[2] - firstSecs]);
       }
@@ -308,10 +332,12 @@ export class ServiceLog {
       const b = rows?.find(r => r[0] === state.last[0]);
       const timed = rows?.filter(r => r[2] != null);
       if (!a || !b || !timed?.length) continue;
-      if (!recordingGap && timed.at(-1)[2] - b[2] > DROPOUT_REMAINING_S) {
+      // Only while the vehicle feed is arriving: when it fails, every bus goes quiet at once.
+      if (!recordingGap && vehicles && timed.at(-1)[2] - b[2] > DROPOUT_REMAINING_S) {
         const day = this.#day(state.date);
         day.feed.dropouts++;
         (day.feedRoute[state.routeId] ??= [0, 0, 0, 0])[1]++;
+        if (state.bus) (day.feedVehicle[state.bus] ??= [0, 0, 0, 0])[3]++;
         continue;
       }
       const scheduled = b[2] - a[2];
@@ -384,6 +410,10 @@ export class ServiceLog {
     const extra = !made && list[i + 1] ? list[i + 1][0] - list[i][0] : 0;
     const day = this.#day(calendarDate);
     add(((day.transfers[hub.id] ??= {})[`${from.r}>${to.r}`] ??= []), [1, made ? 1 : 0, made ? to.at - arrived : 0, extra, !made && extra ? 1 : 0]);
+    // The time the rider had, to the minute, for working out how far a departure would have to move.
+    const slack = Math.max(-SLACK_MAX_MIN, Math.min(SLACK_MAX_MIN, Math.round((to.at - arrived) / 60)));
+    const hist = ((day.transferSlack[hub.id] ??= {})[`${from.r}>${to.r}`] ??= {});
+    hist[slack] = (hist[slack] ?? 0) + 1;
   }
 
   #departuresAt(hub, date) {
@@ -469,10 +499,13 @@ export class ServiceLog {
       predictions: this.#predictions(dates),
       headways: this.#headways(dates),
       runtime: this.#runtime(dates),
+      runtimeBands: this.#runtimeBands(dates, schedule),
+      ontimeByTrip: this.#ontimeByTrip(dates), // trip id -> [days run, timepoint departures, early, late]
+      feedVehicle: this.#sum(dates, 'feedVehicle'), // vehicle id -> [GPS reports, stale, gaps, vanished mid-trip]
       delays: this.#sum(dates, 'delayStop'), // "route|dir|stop" -> [n, Σ delay, Σ timetabled seconds from the trip's start]
       anyStop: this.#sum(dates, 'anyStop'), // route -> [departures from any stop but the last, early]
       arrival: this.#sum(dates, 'arrival'), // route -> [trips timed at their last stop, late, very late, Σ delay]
-      transfers: { hubs: this.#hubs.map(({ id, name, stops }) => ({ id, name, stops })), byHub: this.#transfers(dates) },
+      transfers: { hubs: this.#hubs.map(({ id, name, stops }) => ({ id, name, stops })), byHub: this.#transfers(dates), slack: this.#transferSlack(dates) },
       feed: { byDate: dates.map(date => ({ date, ...(this.#days.get(date)?.feed ?? {}) })), byRoute: this.#sum(dates, 'feedRoute') },
       daily: this.#daily(dates, delivered.byDate),
     };
@@ -638,6 +671,54 @@ export class ServiceLog {
     }
     // trip id -> [route, runs, Σ actual, Σ timetabled, runs over by 10%+, runs with a start time, Σ start delay, late starts]
     return { byTrip };
+  }
+
+  // Running time by route, direction and time of day (by when the trip starts), as the timetable
+  // would need it: each run's measured time over its timetabled time (between the first and last
+  // timepoints seen), so runs seen over different stretches compare. "route|dir|period" ->
+  // [runs, median ratio, 85th-percentile ratio, mean timetabled seconds for the whole trip, trips].
+  #runtimeBands(dates, schedule) {
+    const bands = new Map();
+    for (const date of dates) {
+      for (const [tripId, [actual, scheduled, routeId]] of Object.entries(this.#days.get(date)?.runtime ?? {})) {
+        const trip = schedule?.trips?.[tripId];
+        const timed = trip?.s.filter(r => r[2] != null);
+        if (!timed?.length || !scheduled) continue;
+        const key = `${routeId}|${trip.d}|${periodOf(Math.floor(timed[0][2] / 3600) % 24)}`;
+        const band = bands.get(key) ?? bands.set(key, { ratios: [], whole: 0, trips: new Set() }).get(key);
+        band.ratios.push(actual / scheduled);
+        band.whole += timed.at(-1)[2] - timed[0][2];
+        band.trips.add(tripId);
+      }
+    }
+    const out = {};
+    for (const [key, b] of bands) {
+      const sorted = b.ratios.sort((x, y) => x - y);
+      const at = q => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
+      out[key] = [sorted.length, round3(at(0.5)), round3(at(0.85)), Math.round(b.whole / sorted.length), b.trips.size];
+    }
+    return out;
+  }
+
+  #ontimeByTrip(dates) {
+    const out = {};
+    for (const date of dates) {
+      for (const [tripId, v] of Object.entries(this.#days.get(date)?.ontimeTrip ?? {})) add((out[tripId] ??= []), [1, ...v]);
+    }
+    return out;
+  }
+
+  #transferSlack(dates) {
+    const out = {};
+    for (const date of dates) {
+      for (const [hub, pairs] of Object.entries(this.#days.get(date)?.transferSlack ?? {})) {
+        for (const [pair, hist] of Object.entries(pairs)) {
+          const into = ((out[hub] ??= {})[pair] ??= {});
+          for (const [min, n] of Object.entries(hist)) into[min] = (into[min] ?? 0) + n;
+        }
+      }
+    }
+    return out; // hub id -> "from>to" -> { minutes the rider had: connections }
   }
 
   #transfers(dates) {
