@@ -593,6 +593,13 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Cut:** the Trends tab (each tab gets its own by-day chart; week-on-week moved to Needs attention; the worst days moved to On time), the Weather tab (rain stays as ☂ on the by-day charts), and the Shelters tab with its Needs attention list and `Schedule.departuresByStop`.
 - **Guide:** chapters regrouped under the seven tabs (ids `spacing`, `runtime`, `connections`, `info`, with `spacing-bunching`, `runtime-speeds` and `info-feed` for their second sections); Weather, Trends and Shelters chapters removed.
 
+**Phase 28 — the map as an investigation tool ✅ (built; map not yet seen drawn)**
+
+- **Cut:** three.js and the 3D buses, the 3D buildings, playback 30 s behind the feed with dead-reckoning (`web/reckon.js`), the automatic 3D/2D switch (`web/device.js`), the 3D bunching "!" (`web/bunch-markers.js`), tropical storm cones, National Weather Service alerts and the header weather, "Your location", "Follow", and the installable app. Phases 4–8 and 23 describe what was there.
+- **Now:** a flat 2D map, north up. Each bus is a dot at its latest reported position with a heading arrow, a halo when 2+ minutes late, and faded when its report is over 2 minutes old (the header counts those). Buses and the bunching badge are picked with `queryRenderedFeatures`. The bunching replay keeps its route-shape geometry (`web/shapes.js`).
+- **Service worker:** `web/sw.js` is now a stub that deletes the old caches and unregisters itself, so browsers that installed the app drop it. Nothing registers it any more.
+- **Settings:** theme, rain radar, stops, stop names, 12/24-hour time.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

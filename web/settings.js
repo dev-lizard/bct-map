@@ -3,10 +3,7 @@
 
 export const DEFAULT_SETTINGS = {
   theme: 'auto', // 'auto' (by the time in Broward), 'day' or 'night'
-  buildings: true, // 3D buildings
   radar: false, // rain radar layer
-  storms: true, // National Hurricane Center forecast cones, when there is an Atlantic storm
-  vehicles: 'auto', // 'auto' (3D, switching to 2D if the device is slow), '3d' or '2d'
   stops: 'active-routes', // 'active-routes' (routes with a bus running), 'all' or 'none'
   stopNames: true,
   timeFormat: '12h', // or '24h'
@@ -15,7 +12,6 @@ export const DEFAULT_SETTINGS = {
 
 const CHOICES = {
   theme: ['auto', 'day', 'night'],
-  vehicles: ['auto', '3d', '2d'],
   stops: ['active-routes', 'all', 'none'],
   timeFormat: ['12h', '24h'],
 };

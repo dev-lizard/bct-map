@@ -1,25 +1,20 @@
-// Live 3D map: OpenFreeMap basemap in MapLibre GL, 3D buildings, BCT route lines, and one three.js
-// box per bus drawn in a MapLibre custom layer. Buses are snapped to their trip's route shape and
-// played back along it a fixed delay behind the feed, dead-reckoning when a report is late (see
-// web/reckon.js). Clicking a bus or stop opens its trip timeline or departure board (web/panel.js);
-// the left rail opens routes with the route filter, search, alerts and settings (web/sidebar.js).
-// Settings persist in localStorage (web/settings.js) and the view lives in the URL (web/links.js).
+// Live map for BCT staff: OpenFreeMap basemap in MapLibre GL, BCT route lines and stops, and each bus
+// at its latest reported position (faded when that report is old). Clicking a bus or stop opens its
+// trip timeline or departure board (web/panel.js); the left rail opens routes with the route filter,
+// search, alerts, the bus table, Analytics and settings (web/sidebar.js). Settings persist in
+// localStorage (web/settings.js) and the view lives in the URL (web/links.js).
 /* global maplibregl */
-import * as THREE from 'three';
 import { apiUrl, getApiJson } from './api.js';
 import { cityName, describeAmenities } from './amenities.js';
 import { unpackBundle } from './gtfs-rt.js';
 import { LiveFeed } from './live.js';
-import { addDays, serviceDayStart, servicesOn, ymdInZone } from './gtfs-util.js';
+import { serviceDayStart } from './gtfs-util.js';
 import { routesByStopPair, SPEED_BANDS } from './speeds.js';
 import { canceledTripDetails } from './canceled.js';
 import { createReplay } from './replay.js';
-import { createBunchMarkers } from './bunch-markers.js';
-import { createFrameMonitor, kmOutside, serviceArea } from './device.js';
-import { el, formatClock, formatDate, formatTime, formatWhen, icon, routeBadge, setTimeFormat } from './dom.js';
+import { el, formatClock, formatDate, formatTime, routeBadge, setTimeFormat } from './dom.js';
 import { linkSearch, parseLink } from './links.js';
 import { createPanel } from './panel.js';
-import { MAX_SPEED_MPS, approach, positionAt, pushReport, reckonCap, updateSpeed } from './reckon.js';
 import { createSearchIndex } from './search.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { ShapeLine } from './shapes.js';
@@ -29,43 +24,19 @@ const POLL_MS = 10_000; // BCT republishes about every 10 s
 const TIMEZONE = 'America/New_York';
 const CENTER = [-80.1437, 26.1224]; // Broward Central Terminal, Fort Lauderdale
 const MAX_BOUNDS = [[-80.95, 25.55], [-79.85, 26.6]];
-const BUS = { length: 12, width: 2.6, height: 3.2 }; // metres, about a 40 ft bus
-const MIN_BUS_PX = 18; // buses never draw shorter than this on screen, however far out you zoom
-const LATE_AFTER_S = 120; // aklcommute.nz shows its "late" glow from 2 minutes
-const CLICK_RADIUS_PX = 28;
+const LATE_AFTER_S = 120; // a halo from 2 minutes late
+const STALE_AFTER_S = 120; // a GPS report older than this is drawn faded
+const CLICK_RADIUS_PX = 14;
 const STOP_CLICK_RADIUS_PX = 8;
-
-// Buses are drawn where the feed says they were this long ago. Replaying 3 minutes of live BCT data
-// (2026-10-22), a bus was already drawn more than 50 m past its next report when it arrived 20% of
-// the time with no delay, 5.5% at 20 s, 1.2% at 30 s and 0.4% at 40 s; moving buses stood still
-// 38%, 21%, 8% and 3% of the time. Lower it for fresher positions, raise it for smoother ones.
-const PLAYBACK_DELAY_S = 30;
-// Reports further than this from the trip's shape count as off-route (deadheading, detours, depots).
-const SNAP_MAX_OFFSET_M = 40;
-// Further than this between two reports, glide straight there instead of driving the whole street.
-const MAX_SHAPE_JUMP_M = 2500;
-// A report up to this far behind the last one is GPS jitter, not the bus reversing.
-const BACKTRACK_TOLERANCE_M = 30;
-// Drawn further ahead of a new report than this, the bus glides back instead of waiting for it.
-const MAX_HOLD_M = 150;
-// Moves onto the route (first sighting, trip change, big correction) take this long.
-const GLIDE_ONTO_ROUTE_MS = 2000;
-// Each bus's report interval, smoothed and kept within these bounds. It sets how far past a report
-// the bus may be dead-reckoned, and how long off-route glides last.
-const MIN_GAP_S = 5;
-const MAX_GAP_S = 30;
-const GAP_SMOOTHING = 0.3;
-// Longest single frame step, so buses catch up rather than teleport after a stall (e.g. a background tab).
-const MAX_FRAME_S = 0.5;
 
 // Muted basemaps so route colours stand out, like the original's "faded" Mapbox theme.
 const THEMES = {
   day: {
-    style: 'https://tiles.openfreemap.org/styles/positron', buildings: '#dcd9d2', ambient: 2.2, sun: 2.2,
+    style: 'https://tiles.openfreemap.org/styles/positron',
     stopFill: '#ffffff', stopStroke: '#3c3c43', label: '#3c3c43', labelHalo: '#ffffff', selected: '#1d1d1f',
   },
   night: {
-    style: 'https://tiles.openfreemap.org/styles/dark', buildings: '#303036', ambient: 1.6, sun: 1.0,
+    style: 'https://tiles.openfreemap.org/styles/dark',
     stopFill: '#2c2c2e', stopStroke: '#e5e5ea', label: '#e5e5ea', labelHalo: '#1c1c1e', selected: '#ffffff',
   },
 };
@@ -89,11 +60,10 @@ document.documentElement.dataset.theme = themeKey; // the panels follow the map'
 const statusEl = document.getElementById('status-text');
 const filterNoteEl = document.getElementById('filter-note');
 
-// ---- Header: clock and weather ---------------------------------------------------------------
+// ---- Header: clock --------------------------------------------------------------------------
 
 const dateEl = document.getElementById('date');
 const clockEl = document.getElementById('clock');
-const weatherEl = document.getElementById('weather');
 
 function tickClock() {
   const now = new Date();
@@ -102,20 +72,6 @@ function tickClock() {
 }
 tickClock();
 setInterval(tickClock, 1000);
-
-// The API caches Open-Meteo for 10 minutes, so asking it every 5 is cheap.
-async function refreshWeather() {
-  try {
-    const w = await getApiJson('/api/weather');
-    weatherEl.replaceChildren(icon(w.kind), el('strong', {}, `${w.temperatureF}°F`), ` ${w.condition}`);
-    weatherEl.title = `Feels like ${w.feelsLikeF}°F · wind ${w.windMph} mph${w.stale ? ' · not updated recently' : ''} (Open-Meteo)`;
-    weatherEl.hidden = false;
-  } catch {
-    weatherEl.hidden = true; // the header just goes without weather
-  }
-}
-refreshWeather();
-setInterval(refreshWeather, 5 * 60_000);
 
 // ---- Rain radar ------------------------------------------------------------------------------
 
@@ -141,7 +97,7 @@ async function updateRadar() {
     const tiles = [`${radar.tiles}?v=${radar.valid}`];
     if (!map.getSource('radar')) {
       map.addSource('radar', { type: 'raster', tiles, tileSize: 256, maxzoom: 12, attribution: radar.attribution });
-      const beforeId = ['routes', 'stops', '3d-buildings'].find(id => map.getLayer(id));
+      const beforeId = ['routes', 'stops'].find(id => map.getLayer(id));
       map.addLayer({ id: 'radar', type: 'raster', source: 'radar', paint: { 'raster-opacity': 0.55 } }, beforeId);
     } else if (radar.valid !== radarValid) {
       map.getSource('radar').setTiles(tiles);
@@ -155,103 +111,6 @@ async function updateRadar() {
     radarNoteEl.hidden = false;
   }
 }
-// ---- Weather alerts --------------------------------------------------------------------------
-
-// National Weather Service alerts for Broward go in the Alerts panel. Severe and extreme ones
-// (hurricane, tornado and flash flood warnings, say) also get a banner in the header.
-const weatherBannerEl = document.getElementById('weather-banner');
-let weatherAlerts = { alerts: [], moreUrl: null };
-
-async function refreshWeatherAlerts() {
-  try {
-    weatherAlerts = await getApiJson('/api/weather-alerts');
-  } catch {
-    return; // keep the last list rather than flash it away
-  }
-  sidebar?.setWeatherAlerts(weatherAlerts);
-  const top = weatherAlerts.alerts.find(a => a.severity === 'Extreme' || a.severity === 'Severe');
-  weatherBannerEl.hidden = !top;
-  if (top) {
-    const more = weatherAlerts.alerts.length - 1;
-    weatherBannerEl.replaceChildren(icon('warning'),
-      el('span', {}, el('strong', {}, top.event), top.ends ? ` until ${formatWhen(top.ends)}` : '', more > 0 ? ` · ${more} more` : ''));
-    weatherBannerEl.title = top.headline;
-  }
-}
-weatherBannerEl.addEventListener('click', () => sidebar?.show('alerts'));
-refreshWeatherAlerts();
-setInterval(refreshWeatherAlerts, 3 * 60_000);
-
-// ---- Installable app -------------------------------------------------------------------------
-
-// The service worker (web/sw.js) lets phones install the app and reopens it quickly. It's optional:
-// without it (old browsers, private windows) everything works the same.
-if ('serviceWorker' in navigator) {
-  const register = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if (document.readyState === 'complete') register();
-  else window.addEventListener('load', register);
-}
-
-// ---- Tropical storms -------------------------------------------------------------------------
-
-// The National Hurricane Center's forecast cone, track and points for active Atlantic storms, under
-// the route lines. NHC advises every 6 hours (3 when a storm threatens land), so checking every 15
-// minutes is plenty. ?storms=all in the URL shows every basin, for testing outside the season.
-const stormNoteEl = document.getElementById('storm-note');
-const STORM_LAYERS = ['storm-cone', 'storm-cone-edge', 'storm-track', 'storm-points', 'storm-labels'];
-const stormQuery = new URLSearchParams(location.search).get('storms') === 'all' ? '?basin=all' : '';
-let stormTimer = null;
-
-async function updateStorms() {
-  const show = visible => {
-    for (const id of STORM_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
-  };
-  if (!settings.storms) {
-    show(false);
-    stormNoteEl.hidden = true;
-    clearInterval(stormTimer);
-    stormTimer = null;
-    return;
-  }
-  stormTimer ??= setInterval(updateStorms, 15 * 60_000);
-  let data;
-  try {
-    data = await getApiJson(`/api/storms${stormQuery}`);
-  } catch {
-    return;
-  }
-  if (!settings.storms) return; // switched off while loading
-  if (!map.getSource('storms')) addStormLayers(data.features);
-  else map.getSource('storms').setData(data.features);
-  show(true);
-  stormNoteEl.hidden = data.storms.length === 0;
-  // The map only reaches a little past Broward, so say whether the cone covers the county.
-  const lines = data.storms.map(s => el('span', {},
-    el('a', { href: s.url, target: '_blank', rel: 'noopener' }, `${s.classification} ${s.name}`),
-    s.browardInCone ? ': Broward is inside the forecast cone' : ': its forecast cone does not reach Broward'));
-  stormNoteEl.replaceChildren(icon('hurricane'), el('span', { className: 'storm-lines' }, ...lines));
-}
-
-function addStormLayers(data) {
-  map.addSource('storms', { type: 'geojson', data, attribution: 'Storms: NOAA National Hurricane Center' });
-  const beforeId = ['radar', 'routes', 'stops', '3d-buildings'].find(id => map.getLayer(id));
-  const kind = k => ['==', ['get', 'kind'], k];
-  // Point colours by NHC's label: hurricane or major hurricane, tropical storm, depression, other.
-  const pointColor = ['match', ['get', 'label'], ['H', 'M'], '#dc2626', 'S', '#f59e0b', 'D', '#2563eb', '#6b7280'];
-  map.addLayer({ id: 'storm-cone', type: 'fill', source: 'storms', filter: kind('cone'), paint: { 'fill-color': '#dc2626', 'fill-opacity': 0.1 } }, beforeId);
-  map.addLayer({ id: 'storm-cone-edge', type: 'line', source: 'storms', filter: kind('cone'), paint: { 'line-color': '#dc2626', 'line-width': 1.5, 'line-dasharray': [3, 2] } }, beforeId);
-  map.addLayer({ id: 'storm-track', type: 'line', source: 'storms', filter: kind('track'), paint: { 'line-color': theme.label, 'line-width': 2 } }, beforeId);
-  map.addLayer({ id: 'storm-points', type: 'circle', source: 'storms', filter: kind('point'), paint: { 'circle-radius': 7, 'circle-color': pointColor, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 } }, beforeId);
-  map.addLayer({
-    id: 'storm-labels',
-    type: 'symbol',
-    source: 'storms',
-    filter: kind('point'),
-    layout: { 'text-field': ['get', 'time'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-allow-overlap': true },
-    paint: { 'text-color': theme.label, 'text-halo-color': theme.labelHalo, 'text-halo-width': 1.2 },
-  }, beforeId);
-}
-
 const isNarrow = () => !window.matchMedia('(min-width: 641px)').matches; // panels become bottom sheets
 // The sidebar column (to 412 px) and the detail panel (360 px from the right) both fit from here up;
 // below it, opening one closes the other.
@@ -260,15 +119,18 @@ const map = new maplibregl.Map({
   container: 'map',
   style: theme.style,
   center: CENTER,
-  zoom: 15,
-  pitch: 60,
-  bearing: -17,
-  maxPitch: 75,
+  zoom: 13,
   maxBounds: MAX_BOUNDS,
-  hash: true, // keeps the camera in the URL (#zoom/lat/lon/bearing/pitch) so views can be shared
+  // A flat map: north up, no tilting.
+  maxPitch: 0,
+  dragRotate: false,
+  pitchWithRotate: false,
+  touchPitch: false,
+  hash: true, // keeps the camera in the URL (#zoom/lat/lon) so views can be shared
 });
+map.touchZoomRotate.disableRotation();
 // Bottom-left, so the detail panel on the right never covers it.
-map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-left');
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left');
 
 // ---- Notices ---------------------------------------------------------------------------------
 
@@ -299,65 +161,18 @@ function hideToast() {
   toastEl.hidden = true;
 }
 
-// ---- Your location ---------------------------------------------------------------------------
-
-const geolocate = new maplibregl.GeolocateControl({
-  positionOptions: { enableHighAccuracy: true },
-  trackUserLocation: true,
-  fitBoundsOptions: { maxZoom: 16 },
-});
-map.addControl(geolocate, 'bottom-left');
-let serviceBox = null; // Broward County Transit's service area, once the stops have loaded
-let toldOutside = false; // say so once per tracking session, not on every position update
-const formatKm = km => Math.max(1, Math.round(km)).toLocaleString('en-US');
-
-// Inside the map's limits but outside BCT's area (e.g. Palm Beach): the control shows you there.
-geolocate.on('geolocate', position => {
-  const km =serviceBox ? kmOutside([position.coords.longitude, position.coords.latitude], serviceBox) : 0;
-  if (km < 1 || toldOutside) return;
-  toldOutside = true;
-  showToast(`You're about ${formatKm(km)} km outside Broward County Transit's service area.`, {
-    label: 'Back to Broward',
-    run: () => map.easeTo({ center: CENTER, zoom: 13, duration: 1000 }),
-  });
-});
-// Beyond the map's limits the control leaves the camera where it is, so say why nothing happened.
-geolocate.on('outofmaxbounds', position => {
-  if (toldOutside) return;
-  toldOutside = true;
-  const coords = position?.coords;
-  const km = serviceBox && coords ? kmOutside([coords.longitude, coords.latitude], serviceBox) : null;
-  showToast(km
-    ? `You're about ${formatKm(km)} km from Broward, so the map stays on Broward County.`
-    : "You're outside Broward, so the map stays on Broward County.");
-});
-geolocate.on('error', err => {
-  showToast(err?.code === 1
-    ? 'Location is blocked for this site. Allow it in your browser to see where you are.'
-    : "Couldn't find your location.");
-});
-// Pressing locate takes over the camera, so stop following a bus. (The reverse needs nothing: any
-// camera move not made by the control, including follow mode's, drops it out of its locked state.)
-geolocate.on('trackuserlocationstart', () => stopFollow());
-geolocate.on('trackuserlocationend', () => {
-  toldOutside = false;
-});
-
 async function getJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   return res.json();
 }
 
-// ---- Scene coordinates -----------------------------------------------------------------------
+// ---- Shape coordinates -----------------------------------------------------------------------
 
-// Scene units are metres east (x), north (y) and up (z) from a fixed origin in Broward. Positions go
-// through exact Web Mercator offsets, so only sizes and distances depend on the origin's latitude.
+// Metres east (x) and north (y) from a fixed origin in Broward, for following a route's shape (the
+// bunching replay). Positions go through exact Web Mercator offsets.
 const origin = maplibregl.MercatorCoordinate.fromLngLat(CENTER, 0);
 const mercatorPerMeter = origin.meterInMercatorCoordinateUnits();
-const originMatrix = new THREE.Matrix4()
-  .makeTranslation(origin.x, origin.y, origin.z)
-  .scale(new THREE.Vector3(mercatorPerMeter, -mercatorPerMeter, mercatorPerMeter));
 
 function toScene([lon, lat]) {
   const m = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], 0);
@@ -368,15 +183,10 @@ function fromScene([x, y]) {
   return new maplibregl.MercatorCoordinate(origin.x + x * mercatorPerMeter, origin.y - y * mercatorPerMeter, 0).toLngLat().toArray();
 }
 
-// Compass bearing (clockwise from north) -> scene angle (counter-clockwise from east).
-function bearingToAngle(bearing) {
-  return THREE.MathUtils.degToRad(90 - bearing);
-}
-
 // ---- Route shapes ----------------------------------------------------------------------------
 
 const shapeCoords = new Map(); // shape_id -> [[lon, lat]], filled while drawing the route lines
-const shapeLines = new Map(); // shape_id -> ShapeLine in scene metres, built the first time a bus needs it
+const shapeLines = new Map(); // shape_id -> ShapeLine in metres, built the first time a replay needs it
 
 function shapeLine(shapeId) {
   if (!shapeId || !shapeCoords.has(shapeId)) return null;
@@ -386,25 +196,6 @@ function shapeLine(shapeId) {
 }
 
 // ---- Basemap layers --------------------------------------------------------------------------
-
-// OpenFreeMap's positron and dark styles are flat, so extrude the OpenMapTiles building footprints.
-function addBuildings(beforeId) {
-  if (!map.getSource('openmaptiles')) return;
-  map.addLayer({
-    id: '3d-buildings',
-    type: 'fill-extrusion',
-    source: 'openmaptiles',
-    'source-layer': 'building',
-    minzoom: 14,
-    filter: ['!=', ['get', 'hide_3d'], true],
-    paint: {
-      'fill-extrusion-color': theme.buildings,
-      'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 15, ['coalesce', ['get', 'render_height'], 0]],
-      'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
-      'fill-extrusion-opacity': 0.85,
-    },
-  }, beforeId);
-}
 
 const routesList = []; // [{ routeId, routeShortName, routeLongName, routeColor, routeTextColor }], in BCT's order
 const routesById = new Map();
@@ -568,7 +359,7 @@ function setRouteFilter(ids, { save = true } = {}) {
     settings.routes = routeFilter ? [...routeFilter] : null;
     saveSettings(settings);
   }
-  for (const v of vehicles.values()) v.mesh.visible = routeShown(v.data.routeId);
+  drawBuses();
   if (map.getLayer('routes')) map.setFilter('routes', routeFilter ? ['in', ['get', 'routeId'], ['literal', [...routeFilter]]] : null);
   updateStops();
   updateFilterNote();
@@ -628,260 +419,138 @@ function fitRoute(routeId) {
   map.fitBounds(bounds, { padding: cameraPadding(), maxZoom: 15.5, duration: 900 });
 }
 
-// ---- 3D vehicles -----------------------------------------------------------------------------
+// ---- Buses -----------------------------------------------------------------------------------
 
-const scene = new THREE.Scene();
-const camera = new THREE.Camera();
-scene.add(new THREE.AmbientLight(0xffffff, theme.ambient));
-const sun = new THREE.DirectionalLight(0xffffff, theme.sun);
-sun.position.set(-0.4, -0.8, 1); // high in the south-south-west
-scene.add(sun);
-
-// Box with its base at z=0 so scaling it up for visibility never sinks it into the road.
-const busGeometry = new THREE.BoxGeometry(BUS.length, BUS.width, BUS.height).translate(0, 0, BUS.height / 2);
-const glowGeometry = new THREE.SphereGeometry(BUS.length * 0.75, 16, 12).translate(0, 0, BUS.height / 2);
-const lateMaterial = new THREE.MeshBasicMaterial({ color: 0xff7a00, transparent: true, opacity: 0.3, depthWrite: false });
-const routeMaterials = new Map();
-
-function materialFor(color) {
-  if (!routeMaterials.has(color)) routeMaterials.set(color, new THREE.MeshLambertMaterial({ color }));
-  return routeMaterials.get(color);
-}
-
-// Outline for the selected bus: a slightly larger box showing only its inside faces, so it reads as
-// a border around the bus. Re-parented onto whichever bus is selected.
-const selectionOutline = new THREE.Mesh(busGeometry, new THREE.MeshBasicMaterial({ color: theme.selected, side: THREE.BackSide }));
-
-// A red "!" over each pair of buses bunched right now (web/bunch-markers.js), worked out from each
-// feed in the browser, so it costs the API nothing.
-const bunchMarkers = createBunchMarkers({ map, scene, fromScene, reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false });
-let bunchPopup = null;
-selectionOutline.scale.set(1.2, 1.6, 1.25);
-selectionOutline.frustumCulled = false;
-
-// True size up close; zoomed out, held at MIN_BUS_PX long on screen like the original's constant
-// pixel-size scaling.
-function scaleForZoom(zoom) {
-  const metersPerPixel = (40_075_016.686 * Math.cos((CENTER[1] * Math.PI) / 180)) / (512 * 2 ** zoom);
-  return Math.max(1, (MIN_BUS_PX * metersPerPixel) / BUS.length);
-}
-
-let renderer = null;
-let lastScaleZoom = null;
-let lastFrameMs = null;
+// Each bus is a circle in its route's colour at its latest reported position, with an arrow for its
+// heading and a halo when it's running 2+ minutes late; faded when the report is more than
+// STALE_AFTER_S old. Positions change once a feed (every 10 s); nothing is animated in between.
 let serverClockOffsetS = 0; // API clock minus this browser's clock, from each poll's X-Server-Time
-// id -> per-bus state:
-//   xy, heading        where and which way the bus is drawn now (scene metres, radians)
-//   line, along        its trip's ShapeLine and how far along it the bus is drawn (null off-route)
-//   reports, cap       recent on-shape reports ({ ts, along }) to play back, and how far past the
-//                      newest one it may be dead-reckoned
-//   glide              a straight-line move in progress (off-route, or getting onto the route)
-//   lastTs, gapS       latest report timestamp and the bus's smoothed report interval (s)
-//   lastReport, speed  latest on-route report ({ along, ts }) and smoothed speed along the shape (m/s)
-const vehicles = new Map();
+const vehicles = new Map(); // vehicle id -> the feed's vehicle (web/live.js: id, tripId, routeId, lon, lat, ...)
+let bunches = []; // LiveFeed.bunchedNow() for the latest feed: pairs of buses bunched right now
+let bunchPopup = null;
+const BUS_LAYERS = ['buses-late', 'buses', 'buses-heading', 'buses-selected', 'bunching', 'bunching-mark'];
 
-const vehicleLayer = {
-  id: 'vehicles-3d',
-  type: 'custom',
-  renderingMode: '3d',
-  onAdd(m, gl) {
-    renderer = new THREE.WebGLRenderer({ canvas: m.getCanvas(), context: gl, antialias: true });
-    renderer.autoClear = false;
-  },
-  render(gl, args) {
-    if (use2D) return; // the 2D timer moves the buses and MapLibre draws them
-    const now = performance.now();
-    const moving = stepMoves(now);
-    keepFollowing();
-    watchFrameRate(now);
-    const zoom = map.getZoom();
-    if (lastScaleZoom === null || Math.abs(zoom - lastScaleZoom) > 0.05) {
-      lastScaleZoom = zoom;
-      const s = scaleForZoom(zoom);
-      for (const v of vehicles.values()) v.mesh.scale.setScalar(s);
-    }
-    const bobbing = bunchMarkers.place(now, vehicles, scaleForZoom(zoom));
-    camera.projectionMatrix.fromArray(args.defaultProjectionData.mainMatrix).multiply(originMatrix);
-    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
-    renderer.resetState();
-    renderer.render(scene, camera);
-    if (moving || bobbing) map.triggerRepaint();
-  },
-};
-
-function addVehicle(v, xy) {
-  const mesh = new THREE.Mesh(busGeometry, materialFor(v.routeColor));
-  mesh.scale.setScalar(scaleForZoom(map.getZoom()));
-  mesh.frustumCulled = false; // three.js can't derive a reliable frustum from MapLibre's matrix
-  const glow = new THREE.Mesh(glowGeometry, lateMaterial);
-  glow.visible = false;
-  glow.frustumCulled = false;
-  mesh.add(glow);
-  scene.add(mesh);
-  const state = {
-    mesh, glow, data: v, xy, heading: null, line: null, along: null, reports: [], cap: 0, glide: null,
-    lastTs: null, gapS: POLL_MS / 1000, lastReport: null, speed: null,
-  };
-  placeMesh(state);
-  vehicles.set(v.id, state);
-  return state;
+function addBusLayers(beforeId) {
+  addArrowImage();
+  map.addSource('buses', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  const opacity = ['case', ['get', 'stale'], 0.35, 1];
+  map.addLayer({
+    id: 'buses-late',
+    type: 'circle',
+    source: 'buses',
+    filter: ['==', ['get', 'late'], true],
+    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 15], 'circle-color': '#ff7a00', 'circle-opacity': ['*', 0.3, opacity] },
+  }, beforeId);
+  map.addLayer({
+    id: 'buses',
+    type: 'circle',
+    source: 'buses',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 8],
+      'circle-color': ['get', 'color'],
+      'circle-opacity': opacity,
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 1.5,
+      'circle-stroke-opacity': opacity,
+    },
+  }, beforeId);
+  map.addLayer({
+    id: 'buses-heading',
+    type: 'symbol',
+    source: 'buses',
+    filter: ['==', ['get', 'hasBearing'], true],
+    layout: {
+      'icon-image': 'bus-arrow',
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.45, 16, 0.8],
+      'icon-rotate': ['get', 'bearing'],
+      'icon-rotation-alignment': 'map',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+    paint: { 'icon-color': '#ffffff', 'icon-opacity': opacity },
+  }, beforeId);
+  map.addLayer({
+    id: 'buses-selected',
+    type: 'circle',
+    source: 'buses',
+    filter: ['==', ['get', 'id'], ''],
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 12],
+      'circle-color': 'rgba(0, 0, 0, 0)',
+      'circle-stroke-color': theme.selected,
+      'circle-stroke-width': 3,
+    },
+  }, beforeId);
+  // Bunching in progress: a red "!" badge between the two buses.
+  map.addSource('bunching', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'bunching',
+    type: 'circle',
+    source: 'bunching',
+    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 13], 'circle-color': '#e0362c', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2, 'circle-translate': [0, -14] },
+  }, beforeId);
+  map.addLayer({
+    id: 'bunching-mark',
+    type: 'symbol',
+    source: 'bunching',
+    layout: { 'text-field': '!', 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 10, 12, 16, 18], 'text-allow-overlap': true, 'text-ignore-placement': true },
+    paint: { 'text-color': '#ffffff', 'text-translate': [0, -14] },
+  }, beforeId);
 }
 
-function placeMesh(state) {
-  state.mesh.position.set(state.xy[0], state.xy[1], 0);
-  if (state.heading != null) state.mesh.rotation.z = state.heading;
+// An arrowhead pointing north, drawn on a canvas; as an SDF image the style can tint and rotate it.
+function addArrowImage() {
+  const size = 32;
+  const ctx = Object.assign(document.createElement('canvas'), { width: size, height: size }).getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(16, 5);
+  ctx.lineTo(25, 25);
+  ctx.lineTo(16, 20);
+  ctx.lineTo(7, 25);
+  ctx.closePath();
+  ctx.fill();
+  map.addImage('bus-arrow', ctx.getImageData(0, 0, size, size), { sdf: true, pixelRatio: 2 });
 }
 
-// Called with each new report. Works out where the bus is along its shape and how fast it's going,
-// and queues the report for playback, or starts a straight glide when it can't follow the street.
-function onReport(state, v, now) {
-  const reported = toScene([v.lon, v.lat]);
-  const line = shapeLine(v.shapeId);
-  if (line !== state.line) {
-    // New trip, or no shape: nothing learned on the old shape applies.
-    Object.assign(state, { line, along: null, reports: [], lastReport: null, speed: null });
-  }
-  const reportedHeading = v.bearing == null ? null : bearingToAngle(v.bearing);
-  // Anchor on the last *report*, not the drawn position: dead-reckoning can draw the bus ahead of the
-  // data, and on an out-and-back stretch that would pull a lagging report onto the return leg.
-  const near = state.lastReport?.along ?? state.along;
-  const hit = line?.project(reported[0], reported[1], near != null ? { near } : { heading: reportedHeading });
-
-  if (!hit || hit.offset > SNAP_MAX_OFFSET_M) {
-    // Off its route (deadheading, detour, depot): straight line between reports, facing the way it moves.
-    Object.assign(state, { reports: [], lastReport: null });
-    glide(state, reported, null, reportedHeading, now, state.gapS * 1000);
-    return;
-  }
-
-  // Speed along the shape since the last report; the server's straight-line estimate until then.
-  const last = state.lastReport;
-  const moved = last ? hit.along - last.along : null;
-  if (last && moved > -BACKTRACK_TOLERANCE_M && moved < MAX_SHAPE_JUMP_M) {
-    state.speed = updateSpeed(state.speed, moved, v.timestamp - last.ts);
-  } else if (state.speed == null && v.speed != null) {
-    state.speed = Math.min(MAX_SPEED_MPS, v.speed);
-  }
-  state.lastReport = { along: hit.along, ts: v.timestamp };
-
-  if (state.along == null) {
-    // Coming onto the shape (first sighting, or back from off-route): start from where it is drawn.
-    const here = line.project(state.xy[0], state.xy[1], { heading: reportedHeading });
-    const ahead = hit.along - here.along;
-    if (here.offset <= SNAP_MAX_OFFSET_M && ahead > -BACKTRACK_TOLERANCE_M && ahead < MAX_SHAPE_JUMP_M) {
-      state.glide = null;
-      state.along = here.along;
-    }
-  }
-  const drawnAhead = state.along == null ? null : state.along - hit.along;
-  if (drawnAhead == null || drawnAhead <= -MAX_SHAPE_JUMP_M || drawnAhead > MAX_HOLD_M) {
-    // Too far to drive along the street, or far past the report: glide onto the route instead.
-    glide(state, line.pointAt(hit.along), hit.along, null, now, GLIDE_ONTO_ROUTE_MS);
-  }
-  pushReport(state.reports, v.timestamp, hit.along);
-  const newest = state.reports.at(-1).along;
-  state.cap = reckonCap(newest, state.speed ?? 0, state.gapS, nextStopAlong(line, v.nextStop, newest));
-}
-
-// The bus's next stop as a distance along its shape, or null if unknown or not on the shape.
-function nextStopAlong(line, stop, along) {
-  if (stop?.lon == null || stop?.lat == null) return null;
-  const [x, y] = toScene([stop.lon, stop.lat]);
-  const hit = line.project(x, y, { near: along });
-  return hit.offset <= SNAP_MAX_OFFSET_M ? hit.along : null;
-}
-
-function glide(state, to, endAlong, fallbackHeading, now, duration) {
-  const dx = to[0] - state.xy[0];
-  const dy = to[1] - state.xy[1];
-  state.along = null;
-  state.glide = {
-    from: state.xy,
-    to,
-    endAlong,
-    heading: Math.hypot(dx, dy) > 3 ? Math.atan2(dy, dx) : fallbackHeading,
-    start: now,
-    duration,
-  };
-}
-
-// Advances every bus to `now`. Returns true while any bus still has somewhere to go.
-function stepMoves(now) {
-  const dt = lastFrameMs == null ? 0 : Math.min(MAX_FRAME_S, (now - lastFrameMs) / 1000);
-  lastFrameMs = now;
-  const playbackTs = Date.now() / 1000 + serverClockOffsetS - PLAYBACK_DELAY_S;
-  let moving = false;
+// Hands MapLibre the buses on the routes shown, and a "!" between each bunched pair of them.
+function drawBuses() {
+  if (!map.getSource('buses')) return;
+  const nowS = Date.now() / 1000 + serverClockOffsetS;
+  const features = [];
   for (const v of vehicles.values()) {
-    if (v.glide) {
-      stepGlide(v, now);
-      moving = true;
-    } else if (v.reports.length && v.along != null) {
-      const target = positionAt(v.reports, playbackTs, v.speed ?? 0, v.cap);
-      v.along = approach(v.along, target.along, Math.max(0, target.speed), dt);
-      v.xy = v.line.pointAt(v.along);
-      v.heading = v.line.headingAt(v.along);
-      if (v.along < target.along || target.speed > 0) moving = true;
-    }
-    placeMesh(v);
+    if (!routeShown(v.routeId)) continue;
+    features.push({
+      type: 'Feature',
+      properties: {
+        id: v.id,
+        tripId: v.tripId ?? '',
+        color: v.routeColor,
+        late: v.delay != null && v.delay >= LATE_AFTER_S,
+        stale: nowS - v.timestamp > STALE_AFTER_S,
+        hasBearing: v.bearing != null,
+        bearing: v.bearing ?? 0,
+      },
+      geometry: { type: 'Point', coordinates: [v.lon, v.lat] },
+    });
   }
-  return moving;
-}
-
-function stepGlide(v, now) {
-  const g = v.glide;
-  const t = Math.min(1, (now - g.start) / g.duration);
-  v.xy = [g.from[0] + (g.to[0] - g.from[0]) * t, g.from[1] + (g.to[1] - g.from[1]) * t];
-  if (g.heading != null) v.heading = g.heading;
-  if (t < 1) return;
-  v.glide = null;
-  if (g.endAlong != null) {
-    v.along = g.endAlong; // on the shape now: playback takes over from the next frame
-    v.heading = v.line.headingAt(v.along);
-  }
+  map.getSource('buses').setData({ type: 'FeatureCollection', features });
+  const pairs = [];
+  bunches.forEach((b, i) => {
+    const a = vehicles.get(b.leaderBus);
+    const f = vehicles.get(b.followerBus);
+    if (!a || !f || !routeShown(a.routeId)) return;
+    pairs.push({ type: 'Feature', properties: { index: i }, geometry: { type: 'Point', coordinates: [(a.lon + f.lon) / 2, (a.lat + f.lat) / 2] } });
+  });
+  map.getSource('bunching').setData({ type: 'FeatureCollection', features: pairs });
 }
 
 function applyFeed(feed) {
-  const now = performance.now();
-  const previous = new Map(feed.previousVehiclePositions.map(p => [p.vehicleId, p]));
-  const seen = new Set();
-  for (const v of feed.vehiclePositions) {
-    seen.add(v.id);
-    let state = vehicles.get(v.id);
-    if (!state) {
-      // Seed playback with the report before this one, so a freshly loaded page has motion to show.
-      const prev = previous.get(v.id);
-      state = addVehicle(v, toScene(prev ? [prev.longitude, prev.latitude] : [v.lon, v.lat]));
-      if (prev && prev.timestamp < v.timestamp) {
-        state.lastTs = prev.timestamp;
-        onReport(state, { ...v, lon: prev.longitude, lat: prev.latitude, timestamp: prev.timestamp, bearing: prev.bearing }, now);
-      }
-    } else if (v.routeColor !== state.data.routeColor) {
-      state.mesh.material = materialFor(v.routeColor);
-    }
-    state.data = v;
-    state.mesh.visible = routeShown(v.routeId);
-    state.glow.visible = v.delay != null && v.delay >= LATE_AFTER_S;
-    // Same report as the last poll (about a third of buses each time): nothing new to play back.
-    if (v.timestamp === state.lastTs) continue;
-    if (state.lastTs != null) {
-      const gap = Math.min(MAX_GAP_S, Math.max(MIN_GAP_S, v.timestamp - state.lastTs));
-      state.gapS += GAP_SMOOTHING * (gap - state.gapS);
-    }
-    state.lastTs = v.timestamp;
-    onReport(state, v, now);
-  }
-  for (const [id, state] of vehicles) {
-    if (!seen.has(id)) {
-      scene.remove(state.mesh); // geometry and materials are shared, so nothing to dispose
-      vehicles.delete(id);
-    }
-  }
-  bunchMarkers.set(live.bunchedNow());
-  map.triggerRepaint();
-  if (use2D) tick2D(); // show new and departed buses now, not at the next tick
-  monitorFromMs ??= performance.now() + 3000; // let the first tiles and buses settle before judging
-
+  vehicles.clear();
+  for (const v of feed.vehiclePositions) vehicles.set(v.id, v);
+  bunches = live.bunchedNow();
   lastFeed = feed;
+  drawBuses();
   updateStops();
   updateStatus();
   const counts = new Map();
@@ -901,9 +570,11 @@ function updateStatus() {
   const all = lastFeed.vehiclePositions;
   const shown = routeFilter ? all.filter(v => routeShown(v.routeId)) : all;
   const late = shown.filter(v => v.delay != null && v.delay >= LATE_AFTER_S).length;
-  const age = Math.max(0, Math.round(Date.now() / 1000 + serverClockOffsetS - (lastFeed.feedTimestamps.vehiclePositions ?? lastFeed.generatedAt)));
+  const nowS = Date.now() / 1000 + serverClockOffsetS;
+  const stale = shown.filter(v => nowS - v.timestamp > STALE_AFTER_S).length;
+  const age = Math.max(0, Math.round(nowS - (lastFeed.feedTimestamps.vehiclePositions ?? lastFeed.generatedAt)));
   const buses = routeFilter ? `${shown.length} of ${all.length}` : `${all.length}`;
-  statusEl.textContent = `${buses} buses live · ${late} running 2+ min late · data ${age}s old · drawn ${PLAYBACK_DELAY_S}s behind`;
+  statusEl.textContent = `${buses} buses live · ${late} running 2+ min late${stale ? ` · ${stale} with GPS over 2 min old (faded)` : ''} · data ${age}s old`;
 }
 
 // ---- Polling (paused while the tab is hidden, like the original) ------------------------------
@@ -911,7 +582,6 @@ function updateStatus() {
 let pollTimer = null;
 let booted = false; // polling must wait for the map and route shapes, even if the tab becomes visible first
 let live = null; // the LiveFeed (web/live.js), once the timetable has loaded
-let firstPoll = true;
 
 // The API relays BCT's raw feeds; everything else (delays, bearings, departure boards) is worked
 // out here from them and the timetable.
@@ -924,10 +594,8 @@ async function poll() {
     const bytes = new Uint8Array(await res.arrayBuffer());
     const serverTime = Number(res.headers.get('X-Server-Time'));
     if (serverTime) serverClockOffsetS = (serverTime - (sentAt + Date.now()) / 2) / 1000;
-    // Older vehicle feeds are only needed once, to give a freshly opened page motion to show.
-    const feeds = unpackBundle(bytes, { history: firstPoll });
+    const feeds = unpackBundle(bytes);
     if (!feeds.vehiclePositions) throw new Error('no vehicle positions this time');
-    firstPoll = false;
     applyFeed(live.ingest(feeds));
     panel.refresh();
   } catch (err) {
@@ -946,153 +614,10 @@ document.addEventListener('visibilitychange', () => {
   else if (booted) startPolling();
 });
 
-// ---- 2D buses: the lighter fallback ----------------------------------------------------------
-
-// In 2D the buses are MapLibre circles with a heading arrow. A timer moves them five times a second
-// instead of redrawing the whole map every frame, which is most of what makes 3D heavy.
-const TWO_D_UPDATE_MS = 200;
-const TWO_D_LAYERS = ['buses-2d-late', 'buses-2d', 'buses-2d-heading', 'buses-2d-selected', 'bunching-2d', 'bunching-2d-mark'];
-let use2D = settings.vehicles === '2d';
-let twoDTimer = null;
-const frameMonitor = createFrameMonitor();
-let monitorFromMs = null; // when to start judging the frame rate: a few seconds after the first feed
-
-function addBuses2D(beforeId) {
-  addArrowImage();
-  map.addSource('buses-2d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-  map.addLayer({
-    id: 'buses-2d-late',
-    type: 'circle',
-    source: 'buses-2d',
-    filter: ['==', ['get', 'late'], true],
-    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 15], 'circle-color': '#ff7a00', 'circle-opacity': 0.3 },
-  }, beforeId);
-  map.addLayer({
-    id: 'buses-2d',
-    type: 'circle',
-    source: 'buses-2d',
-    paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 8],
-      'circle-color': ['get', 'color'],
-      'circle-stroke-color': '#ffffff',
-      'circle-stroke-width': 1.5,
-    },
-  }, beforeId);
-  map.addLayer({
-    id: 'buses-2d-heading',
-    type: 'symbol',
-    source: 'buses-2d',
-    filter: ['==', ['get', 'hasBearing'], true],
-    layout: {
-      'icon-image': 'bus-arrow',
-      'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.45, 16, 0.8],
-      'icon-rotate': ['get', 'bearing'],
-      'icon-rotation-alignment': 'map',
-      'icon-allow-overlap': true,
-      'icon-ignore-placement': true,
-    },
-    paint: { 'icon-color': '#ffffff' },
-  }, beforeId);
-  map.addLayer({
-    id: 'buses-2d-selected',
-    type: 'circle',
-    source: 'buses-2d',
-    filter: ['==', ['get', 'id'], ''],
-    paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 7, 16, 12],
-      'circle-color': 'rgba(0, 0, 0, 0)',
-      'circle-stroke-color': theme.selected,
-      'circle-stroke-width': 3,
-    },
-  }, beforeId);
-  // Bunching in progress: a red "!" badge between the two buses.
-  map.addSource('bunching-2d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-  map.addLayer({
-    id: 'bunching-2d',
-    type: 'circle',
-    source: 'bunching-2d',
-    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 16, 13], 'circle-color': '#e0362c', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2, 'circle-translate': [0, -14] },
-  }, beforeId);
-  map.addLayer({
-    id: 'bunching-2d-mark',
-    type: 'symbol',
-    source: 'bunching-2d',
-    layout: { 'text-field': '!', 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 10, 12, 16, 18], 'text-allow-overlap': true, 'text-ignore-placement': true },
-    paint: { 'text-color': '#ffffff', 'text-translate': [0, -14] },
-  }, beforeId);
-  setVehicleMode(use2D);
-}
-
-// An arrowhead pointing north, drawn on a canvas; as an SDF image the style can tint and rotate it.
-function addArrowImage() {
-  const size = 32;
-  const ctx = Object.assign(document.createElement('canvas'), { width: size, height: size }).getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.moveTo(16, 5);
-  ctx.lineTo(25, 25);
-  ctx.lineTo(16, 20);
-  ctx.lineTo(7, 25);
-  ctx.closePath();
-  ctx.fill();
-  map.addImage('bus-arrow', ctx.getImageData(0, 0, size, size), { sdf: true, pixelRatio: 2 });
-}
-
-function setVehicleMode(on2D) {
-  use2D = on2D;
-  for (const id of TWO_D_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', use2D ? 'visible' : 'none');
-  clearInterval(twoDTimer);
-  if (use2D) {
-    twoDTimer = setInterval(tick2D, TWO_D_UPDATE_MS);
-    tick2D();
-  }
-  map.triggerRepaint();
-}
-
-// One 2D step: move the buses, keep a followed bus centred, and hand MapLibre their new positions.
-function tick2D() {
-  stepMoves(performance.now());
-  keepFollowing();
-  if (!map.getSource('buses-2d')) return;
-  const features = [];
-  for (const v of vehicles.values()) {
-    if (!v.mesh.visible) continue; // filtered out
-    features.push({
-      type: 'Feature',
-      properties: {
-        id: v.data.id,
-        color: v.data.routeColor,
-        late: v.glow.visible,
-        hasBearing: v.heading != null,
-        bearing: v.heading == null ? 0 : 90 - THREE.MathUtils.radToDeg(v.heading),
-      },
-      geometry: { type: 'Point', coordinates: fromScene(v.xy) },
-    });
-  }
-  map.getSource('buses-2d').setData({ type: 'FeatureCollection', features });
-  map.getSource('bunching-2d')?.setData(bunchMarkers.features(vehicles));
-}
-
-// Automatic mode: if frames come too slowly while the buses animate, switch to 2D (once a visit).
-function watchFrameRate(now) {
-  if (settings.vehicles !== 'auto' || monitorFromMs == null || now < monitorFromMs) return;
-  if (frameMonitor.frame(now) !== 'slow') return;
-  monitorFromMs = Infinity;
-  setVehicleMode(true);
-  showToast('Buses switched to 2D to keep the map smooth on this device.', {
-    label: 'Keep 3D',
-    run: () => changeSettings({ vehicles: '3d' }),
-  });
-}
-
 // ---- Selection and the detail panel ----------------------------------------------------------
 
 function selectBus(vehicleId) {
-  selectionOutline.removeFromParent();
-  const v = vehicleId && vehicles.get(vehicleId);
-  if (v) v.mesh.add(selectionOutline);
-  if (map.getLayer('buses-2d-selected')) map.setFilter('buses-2d-selected', ['==', ['get', 'id'], v ? vehicleId : '']);
-  map.triggerRepaint();
+  if (map.getLayer('buses-selected')) map.setFilter('buses-selected', ['==', ['get', 'id'], vehicleId && vehicles.has(vehicleId) ? vehicleId : '']);
 }
 
 function selectStop(stopId) {
@@ -1114,13 +639,12 @@ function flyTo(lngLat) {
 }
 
 function vehicleForTrip(tripId) {
-  for (const v of vehicles.values()) if (v.data.tripId === tripId) return v.data.id;
+  for (const v of vehicles.values()) if (v.tripId === tripId) return v.id;
   return null;
 }
 
 // The panel opens first so the camera move can allow for it.
 function openStop(stopId, { fly = true } = {}) {
-  stopFollow();
   selectBus(null);
   selectStop(stopId);
   panel.showStop(stopId);
@@ -1129,53 +653,14 @@ function openStop(stopId, { fly = true } = {}) {
 }
 
 function openTrip(tripId, date = null, vehicleId = vehicleForTrip(tripId)) {
-  if (vehicleId !== followedId) stopFollow();
   selectStop(null);
   selectBus(vehicleId);
   panel.showTrip(tripId, date);
 }
 
-// ---- Follow a bus ----------------------------------------------------------------------------
-
-let followedId = null;
-let followHoldUntil = 0; // while the camera eases onto the bus, don't fight the animation
-
-function startFollow(vehicleId) {
-  followedId = vehicleId;
-  selectBus(vehicleId);
-  showBus(vehicleId);
-  followHoldUntil = performance.now() + 850;
-  panel.updateFollow();
-}
-
-function stopFollow() {
-  if (!followedId) return;
-  followedId = null;
-  panel.updateFollow();
-}
-
-// Every frame while following: re-centre if the bus has drifted from the middle of the visible map,
-// whether it moved or the user zoomed around the pointer.
-function keepFollowing() {
-  if (!followedId || performance.now() < followHoldUntil) return;
-  const v = vehicles.get(followedId);
-  if (!v || !v.mesh.visible) {
-    stopFollow(); // the bus left the feed or was filtered out
-    return;
-  }
-  const center = fromScene(v.xy);
-  const [dx, dy] = visibleCenterOffset();
-  const canvas = map.getCanvas();
-  const p = map.project(center);
-  if (Math.hypot(p.x - (canvas.clientWidth / 2 + dx), p.y - (canvas.clientHeight / 2 + dy)) < 0.5) return;
-  map.easeTo({ center, offset: [dx, dy], duration: 0 });
-}
-
-map.on('dragstart', () => stopFollow()); // dragging means the user wants to look elsewhere
-
 function showBus(vehicleId) {
   const v = vehicles.get(vehicleId);
-  if (v) flyTo(fromScene(v.xy));
+  if (v) flyTo([v.lon, v.lat]);
 }
 
 let panelView = null; // what the detail panel shows, mirrored into the URL
@@ -1216,13 +701,10 @@ const panel = createPanel(document.getElementById('panel'), {
     setRouteFilter([routeId]);
     fitRoute(routeId);
   },
-  onFollow: vehicleId => (followedId === vehicleId ? stopFollow() : startFollow(vehicleId)),
-  isFollowing: vehicleId => followedId === vehicleId,
   onView(view) {
     panelView = view;
     if (view?.kind !== 'bunch') replay.stop();
     if (!view) {
-      stopFollow();
       selectBus(null);
       selectStop(null);
     } else if (!panelsFitSideBySide()) {
@@ -1255,7 +737,7 @@ function showSpeedLayer(data) {
       layout: { 'line-cap': 'round' },
       // Slower stretches are drawn wider so they stand out.
       paint: { 'line-color': color, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, ['-', 4, ['*', 0.5, ['get', 'band']]], 16, ['-', 10, ['get', 'band']]] },
-    }, ['stops', '3d-buildings'].find(id => map.getLayer(id)));
+    }, ['stops'].find(id => map.getLayer(id)));
   } else {
     map.getSource('bus-speeds').setData(data);
   }
@@ -1293,7 +775,6 @@ function createShell() {
       const key = `${event.date}|${event.leader}|${event.follower}`;
       try {
         const track = await getApiJson(`/api/bunching-track?key=${encodeURIComponent(key)}`);
-        stopFollow();
         selectBus(null);
         selectStop(null);
         panel.showBunching(track);
@@ -1302,7 +783,6 @@ function createShell() {
       }
     },
     onCanceled(record, related) {
-      stopFollow();
       selectBus(null);
       selectStop(null);
       panel.showCanceled(record, related);
@@ -1321,8 +801,6 @@ function createShell() {
     },
   });
   applyDisplaySettings();
-  serviceBox = serviceArea([...stopsById.values()]);
-  sidebar.setWeatherAlerts(weatherAlerts);
 
   // Open what the link asked for: its route filter (else the saved one), then a stop or trip.
   const routeIdByNumber = new Map(routesList.map(r => [r.routeShortName, r.routeId]));
@@ -1363,39 +841,25 @@ function changeSettings(patch) {
     sidebar.refresh();
   }
   if ('radar' in patch || 'timeFormat' in patch) updateRadar();
-  if ('storms' in patch) updateStorms();
-  if ('vehicles' in patch) {
-    setVehicleMode(settings.vehicles === '2d');
-    sidebar.refresh(); // e.g. "Keep 3D" from the notice, while Settings is open
-  }
   applyDisplaySettings();
 }
 
 function applyDisplaySettings() {
-  if (map.getLayer('3d-buildings')) map.setLayoutProperty('3d-buildings', 'visibility', settings.buildings ? 'visible' : 'none');
   if (map.getLayer('stop-labels')) map.setLayoutProperty('stop-labels', 'visibility', settings.stopNames ? 'visible' : 'none');
   updateStops();
 }
 
-// Buses win over stops: the nearest bus within CLICK_RADIUS_PX, else a stop under the pointer.
+// A bunching marker first, then a bus, then a stop under the pointer.
 map.on('click', e => {
-  const bunch = bunchMarkers.pick(e.point, vehicles, CLICK_RADIUS_PX, use2D);
-  if (bunch) {
-    showBunchPopup(bunch, e.lngLat);
+  const near = radius => [[e.point.x - radius, e.point.y - radius], [e.point.x + radius, e.point.y + radius]];
+  const [bunch] = map.getLayer('bunching') ? map.queryRenderedFeatures(near(CLICK_RADIUS_PX), { layers: ['bunching'] }) : [];
+  if (bunch && bunches[bunch.properties.index]) {
+    showBunchPopup(bunches[bunch.properties.index], e.lngLat);
     return;
   }
-  let bus = null;
-  let bestDistance = CLICK_RADIUS_PX;
-  for (const v of vehicles.values()) {
-    const p = map.project(fromScene(v.xy));
-    const d = Math.hypot(p.x - e.point.x, p.y - e.point.y);
-    if (d < bestDistance && v.data.tripId && v.mesh.visible) {
-      bus = v;
-      bestDistance = d;
-    }
-  }
+  const bus = (map.getLayer('buses') ? map.queryRenderedFeatures(near(CLICK_RADIUS_PX), { layers: ['buses'] }) : []).find(f => f.properties.tripId);
   if (bus) {
-    openTrip(bus.data.tripId, null, bus.data.id);
+    openTrip(bus.properties.tripId, null, bus.properties.id);
     return;
   }
   const r = STOP_CLICK_RADIUS_PX;
@@ -1439,19 +903,16 @@ function topLabelLayerId() {
 }
 
 map.on('load', async () => {
-  // Draw order: the style's roads, then route lines, stops, buildings, buses, stop names, and the
-  // style's labels on top.
+  // Draw order: the style's roads, then route lines, stops, buses, stop names, and the style's
+  // labels on top.
   const labelsId = topLabelLayerId();
-  addBuildings(labelsId);
-  map.addLayer(vehicleLayer, labelsId);
-  addBuses2D(labelsId);
-  const belowBuildings = map.getLayer('3d-buildings') ? '3d-buildings' : 'vehicles-3d';
+  addBusLayers(labelsId);
+  const belowBuses = 'buses-late';
   try {
     const { folder } = await getJson('data/manifest.json');
-    // Route lines also fill shapeCoords, which the buses snap to, so they must load before polling.
     const [routes, stops, schedule] = await Promise.all([
-      addRouteLines(folder, belowBuildings),
-      addStops(folder, belowBuildings, labelsId),
+      addRouteLines(folder, belowBuses),
+      addStops(folder, belowBuses, labelsId),
       getJson(`data/${folder}/schedule.json`),
     ]);
     live = new LiveFeed({ schedule, routes, stops, now: () => Date.now() + serverClockOffsetS * 1000 });
@@ -1459,10 +920,9 @@ map.on('load', async () => {
     if (map.getLayer('routes') && map.getLayer('stops')) map.moveLayer('routes', 'stops');
     createShell();
     updateRadar(); // after the route lines exist, so the radar can go underneath them
-    updateStorms();
   } catch (err) {
     console.error(err);
-    statusEl.textContent = 'Route data missing: run "npm run build:static". Buses will not follow their streets.';
+    statusEl.textContent = 'Route data missing: run "npm run build:static".';
   }
   booted = true;
   startPolling();

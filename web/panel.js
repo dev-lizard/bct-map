@@ -27,10 +27,8 @@ function timeCell(scheduled, predicted) {
 const liveDot = () => el('span', { className: 'live-dot', title: 'Live prediction' });
 
 // onView(view) is called whenever the panel opens something or closes (view = null), so the page
-// can keep the URL in step. onFollow(vehicleId) toggles follow mode; isFollowing(vehicleId) says
-// whether the camera is following that bus.
-// onRoute(routeId) shows a route on the map.
-export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFollow, isFollowing, onView }) {
+// can keep the URL in step. onRoute(routeId) shows a route on the map.
+export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onView }) {
   const titleEl = el('div', { className: 'detail-title' });
   const copyButton = el('button', { className: 'icon-button', type: 'button', title: 'Copy link to this view', ariaLabel: 'Copy link' }, icon('link'));
   const closeButton = el('button', { className: 'icon-button close', type: 'button', title: 'Close', ariaLabel: 'Close panel' }, '×');
@@ -159,13 +157,9 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFoll
     if (trip.vehicleId) {
       const showBus = el('button', { type: 'button', className: 'link' }, `Show bus ${trip.vehicleId}`);
       showBus.addEventListener('click', () => onBus(trip.vehicleId));
-      const follow = el('button', { type: 'button', className: 'small-button follow' });
-      follow.dataset.vehicleId = trip.vehicleId;
-      follow.addEventListener('click', () => onFollow(trip.vehicleId));
-      status.append(' · ', showBus, follow);
+      status.append(' · ', showBus);
     }
     titleEl.replaceChildren(el('h2', {}, routeBadge(trip), ' ', trip.headsign ?? ''), status);
-    updateFollow();
 
     let nextRow = null;
     const rows = trip.stops.map(s => {
@@ -296,19 +290,8 @@ export function createPanel(root, { load, onStop, onTrip, onBus, onRoute, onFoll
     replay.play();
   }
 
-  // Syncs the Follow button with whether the camera is following its bus.
-  function updateFollow() {
-    const button = titleEl.querySelector('.follow');
-    if (!button) return;
-    const following = isFollowing(button.dataset.vehicleId);
-    button.textContent = following ? 'Following' : 'Follow';
-    button.setAttribute('aria-pressed', String(following));
-    button.title = following ? 'Stop following this bus (or drag the map)' : 'Keep the map centred on this bus';
-  }
-
   return {
     showStop: stopId => open({ kind: 'stop', stopId }),
-    updateFollow,
     showTrip: (tripId, date = null) => open({ kind: 'trip', tripId, date }),
     // record: a canceled trip from /api/analytics; related: other canceled trips to list below it.
     showCanceled: (record, related = []) => open({ kind: 'canceled', record, related }),

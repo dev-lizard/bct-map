@@ -2,7 +2,7 @@
   "name": "broward-transit-3d",
   "version": "0.1.0",
   "private": true,
-  "description": "Real-time 3D map of Broward County Transit buses, modelled on aklcommute.nz (ptauckland3d.com).",
+  "description": "Broward County Transit service, live and measured from the buses' GPS, for BCT staff.",
   "type": "module",
   "scripts": {
     "build:static": "node scripts/build-static.mjs",

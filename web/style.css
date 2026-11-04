@@ -10,10 +10,6 @@
   --early: #1d4ed8;
   --live: #16a34a;
   --focus: #2563eb;
-  --warning-bg: #fef3c7;
-  --warning-text: #78350f;
-  --severe: #c2410c;
-  --extreme: #b91c1c;
 }
 
 /* Set by main.js from the map's day/night theme, so the panels always match the basemap. */
@@ -29,10 +25,6 @@
   --early: #93c5fd;
   --live: #4ade80;
   --focus: #60a5fa;
-  --warning-bg: rgb(251 191 36 / 0.18);
-  --warning-text: #fcd34d;
-  --severe: #fb923c;
-  --extreme: #f87171;
 }
 
 html,
@@ -130,84 +122,14 @@ summary:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.weather {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--panel-muted);
-}
-
-.weather[hidden],
 .radar-note[hidden] {
   display: none;
-}
-
-.weather strong {
-  color: var(--panel-text);
-}
-
-.weather .icon {
-  width: 18px;
-  height: 18px;
 }
 
 .radar-note {
   margin-top: 4px;
   color: var(--panel-muted);
   font-size: 12px;
-}
-
-.storm-note {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.storm-note[hidden] {
-  display: none;
-}
-
-.storm-note .icon {
-  flex: none;
-  width: 15px;
-  height: 15px;
-}
-
-.storm-note a {
-  color: inherit;
-}
-
-.storm-lines {
-  display: flex;
-  flex-direction: column;
-}
-
-/* A severe or extreme National Weather Service alert: opens the Alerts panel. */
-.weather-banner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin-top: 6px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--warning-bg);
-  color: var(--warning-text);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.weather-banner[hidden] {
-  display: none;
-}
-
-.weather-banner .icon {
-  flex: none;
-  width: 16px;
-  height: 16px;
 }
 
 .filter-note {
@@ -486,17 +408,6 @@ summary:focus-visible {
   cursor: default;
 }
 
-.small-button.follow {
-  margin-left: 6px;
-  padding: 2px 10px;
-}
-
-.small-button.follow[aria-pressed='true'] {
-  border-color: var(--live);
-  background: var(--live);
-  color: #fff;
-}
-
 .panel-note,
 .empty,
 .footnote {
@@ -694,34 +605,6 @@ summary:focus-visible {
 
 .alert details {
   margin-top: 6px;
-}
-
-/* National Weather Service alerts: a coloured edge by NWS severity. */
-.alert.nws {
-  border-left: 4px solid var(--panel-muted);
-}
-
-.alert.nws.severity-moderate {
-  border-left-color: #d97706;
-}
-
-.alert.nws.severity-severe {
-  border-left-color: var(--severe);
-}
-
-.alert.nws.severity-extreme {
-  border-left-color: var(--extreme);
-}
-
-.alert.nws h3 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.alert.nws h3 .icon {
-  width: 16px;
-  height: 16px;
 }
 
 .alert h4 {

@@ -61,7 +61,7 @@ export function summarizeTripUpdates(feed, { trips, timezone, stops = null, nowS
       startDate,
       canceled: update.trip.scheduleRelationship === 'CANCELED',
       delay: update.delay ?? next?.delay ?? delayAgainstSchedule(scheduled, startDate, next, timezone),
-      // Coordinates let the map stop dead-reckoning at the stop instead of running past it.
+      // Where the next stop is, for the trip timeline.
       nextStop: next && {
         stopId: next.stopId,
         stopName: nextStop?.name ?? null,

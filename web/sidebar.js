@@ -31,7 +31,6 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
   let filter = null; // Set of route ids shown, or null for all
   let counts = new Map(); // route id -> buses running now
   let alerts = [];
-  let weather = { alerts: [], moreUrl: null }; // National Weather Service alerts for Broward
 
   const titleEl = el('h2', {});
   const closeButton = el('button', { type: 'button', className: 'icon-button close', title: 'Close', ariaLabel: 'Close panel' }, '×');
@@ -188,34 +187,18 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
       sync({ force = false } = {}) {
         // BCT restamps every alert's active period on each publish (start = now), so periods are
         // left out of the comparison.
-        const key = JSON.stringify([weather.alerts, alerts.map(({ activePeriods, ...a }) => a), filter && [...filter]]);
+        const key = JSON.stringify([alerts.map(({ activePeriods, ...a }) => a), filter && [...filter]]);
         if (key === shownKey && !force) return;
         shownKey = key;
         const shown = filter ? alerts.filter(a => !a.routes.length || a.routes.some(r => filter.has(r.routeId))) : alerts;
-        const transit = !alerts.length
+        note.textContent = !alerts.length
           ? 'No service alerts right now.'
           : filter && shown.length !== alerts.length
             ? `${shown.length} of ${alerts.length} service alerts affect the routes you're showing.`
-            : `${alerts.length} active service ${alerts.length === 1 ? 'alert' : 'alerts'} from Broward County Transit.`;
-        const n = weather.alerts.length;
-        note.textContent = n ? `${n} weather ${n === 1 ? 'alert' : 'alerts'} for Broward from the National Weather Service. ${transit}` : transit;
-        list.replaceChildren(...weather.alerts.map(weatherCard), ...shown.map(alertCard));
+            : `${alerts.length} active service ${alerts.length === 1 ? 'alert' : 'alerts'} from Broward County Transit: what riders are being told.`;
+        list.replaceChildren(...shown.map(alertCard));
       },
     };
-  }
-
-  function weatherCard(a) {
-    // NWS text is hard-wrapped at about 70 characters, with blank lines between paragraphs.
-    const paragraphs = text => (text ?? '').split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).map(p => el('p', {}, p));
-    return el('article', { className: `alert nws severity-${a.severity.toLowerCase()}` },
-      el('h3', {}, icon('warning'), a.event),
-      el('p', { className: 'status' }, [a.severity !== 'Unknown' && a.severity, a.ends && `until ${formatWhen(a.ends)}`].filter(Boolean).join(', ')),
-      (a.description || a.instruction) && el('details', {},
-        el('summary', {}, 'Details'),
-        ...paragraphs(a.description),
-        ...(a.instruction ? [el('h4', {}, 'What to do'), ...paragraphs(a.instruction)] : [])),
-      el('p', { className: 'status' }, weather.moreUrl ? el('a', { href: weather.moreUrl, target: '_blank', rel: 'noopener' }, a.sender) : a.sender),
-    );
   }
 
   function alertCard(a) {
@@ -261,23 +244,20 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
     return {
       node: el('div', { className: 'settings' },
         choices('Map theme', 'theme', [['auto', 'Automatic: day or night in Broward'], ['day', 'Day'], ['night', 'Night']], 'Changing the theme reloads the map.'),
-        choices('Buses', 'vehicles', [['auto', 'Automatic: 3D, or 2D if the map runs slowly'], ['3d', '3D'], ['2d', '2D (lighter on older devices)']]),
-        toggle('3D buildings', 'buildings'),
         toggle('Rain radar', 'radar'),
-        toggle('Hurricane forecast cones (when there is an Atlantic storm)', 'storms'),
         choices('Stops', 'stops', [['active-routes', 'On routes with a bus running'], ['all', 'All stops'], ['none', 'Hidden']]),
         toggle('Stop names', 'stopNames'),
         choices('Times', 'timeFormat', [['12h', '12-hour'], ['24h', '24-hour']]),
         el('div', { className: 'about' },
           el('h3', {}, 'About'),
-          el('p', {}, 'Live data from Broward County Transit, refreshed every 10 seconds. Buses are drawn about 30 seconds behind the feed so they can move smoothly along their streets.'),
-          el('p', {}, 'Modelled on aklcommute.nz. Basemap: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors.')),
+          el('p', {}, 'For BCT staff: live data from Broward County Transit, refreshed every 10 seconds. Each bus is shown where its latest GPS report put it; a faded bus\'s report is more than 2 minutes old.'),
+          el('p', {}, 'Basemap: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors.')),
       ),
     };
   }
 
   function updateCount() {
-    const n = alerts.length + weather.alerts.length;
+    const n = alerts.length;
     alertCount.hidden = n === 0;
     alertCount.textContent = String(n);
   }
@@ -293,8 +273,7 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
       sections.routes?.sync();
       sections.alerts?.sync();
     },
-    // Re-renders text that depends on settings, e.g. after the 12/24-hour setting changes or the
-    // buses switch to 2D on their own.
+    // Re-renders text that depends on settings, e.g. after the 12/24-hour setting changes.
     refresh() {
       sections.alerts?.sync({ force: true });
       if (sections.settings) {
@@ -312,12 +291,6 @@ export function createSidebar(railEl, panelEl, { routes, search, settings, onFil
       sections.routes?.sync();
       sections.alerts?.sync();
       if (openName === 'buses') sections.buses.sync(buses);
-    },
-    // { alerts, moreUrl } from /api/weather-alerts.
-    setWeatherAlerts(next) {
-      weather = next;
-      updateCount();
-      sections.alerts?.sync();
     },
   };
 }

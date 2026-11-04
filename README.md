@@ -1,6 +1,6 @@
-# Broward Transit 3D
+# Broward Transit
 
-A real-time 3D map of Broward County Transit buses, modelled on [aklcommute.nz](https://aklcommute.nz/) (ptauckland3d.com). Built with MapLibre GL, OpenFreeMap and three.js, so it needs no API keys or accounts.
+A tool for Broward County Transit staff: what service was actually delivered, what went wrong, and what to change, measured independently from the buses' own GPS. It records BCT's live feeds around the clock, grades them (trips run or missed, on time, spacing, running times, connections, predictions, feed quality), lists what needs attention, and has a live map for looking into a bus, trip or stop. Built with MapLibre GL and OpenFreeMap, with a Cloudflare Worker on the free plan, so it needs no API keys or accounts. It began as a 3D map modelled on [aklcommute.nz](https://aklcommute.nz/).
 
 The research, feed findings and build plan are in [docs/GROUNDWORK.md](docs/GROUNDWORK.md).
 
@@ -22,17 +22,14 @@ That downloads BCT's static GTFS (about 10 MB) and writes the timetable files to
 npm run dev
 ```
 
-Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the page works out bus positions, delays and departures itself (`web/live.js`). Buses snap to their route shapes and are played back along them 30 s behind the feed (`PLAYBACK_DELAY_S` in `web/main.js`). They move smoothly between reports without running past the next one. When a report is late, they dead-reckon at their observed speed, capped at their next stop. The first load takes a few seconds while map tiles and route data arrive.
+Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the page works out delays, departures and bunching itself (`web/live.js`). The first load takes a few seconds while map tiles and route data arrive.
 
-- **Details:** click a bus for its trip timeline, or a stop for its next departures. Stops show from zoom 14. On a trip, "Follow" keeps the camera on the bus until you drag the map.
-- **Stops:** the stop panel shows the city, wheelchair access (from BCT's GTFS), what's there (shelter, bench, lighting, trash can, bike rack, from Broward County's "Fixed Bus Stop" GIS layer), and a Directions button that opens transit directions in Apple Maps or Google Maps.
-- **Weather alerts:** National Weather Service alerts for Broward are listed in Alerts; severe and extreme ones (hurricane, tornado, flash flood warnings) also show as a banner in the header.
-- **Hurricanes:** when there's an Atlantic storm, the National Hurricane Center's forecast cone, track and points are drawn on the map, and the header says whether Broward is inside the cone (Settings → Hurricane forecast cones). `?storms=all` in the URL includes storms in other basins, for testing outside the season.
-- **Install:** on phones, "Add to Home Screen" installs it as an app. A service worker keeps the app and timetable cached so it reopens quickly.
-- **Your location:** the locate button (bottom left) shows where you are, or tells you how far outside Broward you are.
-- **Buses:** drawn in 3D, or as lighter 2D dots with heading arrows (Settings → Buses). "Automatic" switches to 2D if the map runs slowly.
-- **Bunching in progress:** a red "!" floats between two buses bunched right now (in 2D, a red badge). Click it for the route, how close they are against the timetable, at which stop, and either bus's trip. Worked out in the browser from the feed the page already loads, by the same rule the Bunching tab records.
-- **Header:** Broward time and current weather (Open-Meteo). Settings → Rain radar adds the US NEXRAD radar layer.
+- **The map:** a flat map, north up. Each bus is a dot in its route's colour at its latest reported GPS position, with an arrow for its heading and an orange halo when it's 2+ minutes late; a bus whose report is more than 2 minutes old is faded, and the header counts them. Nothing is animated between reports, so what you see is what the feed said.
+- **Details:** click a bus for its trip timeline, or a stop for its next departures. Stops show from zoom 14.
+- **Stops:** the stop panel shows the city, wheelchair access (from BCT's GTFS), what's there (shelter, bench, lighting, trash can, bike rack, from Broward County's "Fixed Bus Stop" GIS layer), and a Directions button.
+- **Bunching in progress:** a red "!" badge between two buses bunched right now. Click it for the route, how close they are against the timetable, at which stop, and either bus's trip. Worked out in the browser from the feed the page already loads, by the same rule Analytics records.
+- **Header:** Broward time, how many buses are live, late, or reporting stale GPS, and how old the data is. Settings → Rain radar adds the US NEXRAD radar layer, for context on a bad day.
+- **Alerts (rail):** BCT's service alerts: what riders are being told.
 - **Buses (rail):** every bus in the feed as a sortable, filterable table: route, bus number, destination, next stop, schedule adherence and report age. Click a row to show the bus; download it as CSV.
 - **Analytics (rail):** a tool for BCT staff: what service was delivered, what went wrong, and what to change, measured from the buses' own GPS. One period (today, 7 or 30 days, or custom dates within the last 30) and one route (or all) apply to every tab; tables sort by any column, rows open the route, stop or trip they describe, and each section downloads as CSV. Seven tabs, grouped by who acts on them; the **?** button opens an illustrated guide (`web/guide.html`) at the open tab's chapter.
   - **Needs attention** (the first tab): what to act on, each with who runs it (route, block, bus) and what would fix it: measures short of their goals, blocks with trips not run, trips late or early again and again, running times to change (what 85% of runs take), connections to retime, where gaps open on frequent routes (where to hold buses), congestion ranked by rider-minutes, and GPS units to check. With 14+ days, this week against last, coloured only when a change is more than day-to-day variation. Goals are placeholders in `web/attention.js` until BCT's own are set; headline percentages carry a ± range.
@@ -42,9 +39,9 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
   - **Running time** (scheduling, planning): running time against the timetable by route and trip, late starts, the running time to allow by direction and time of day, where along a route delay builds up, and bus speeds and congestion between stops with a map layer.
   - **Connections** (scheduling): timetabled transfers at hubs, made or missed, and how many minutes later a departure would have to leave to fix a bad one.
   - **Rider information** (customer information, the feed vendor): how right BCT's predicted arrivals were, buses that never came, and the live feed's quality (stale and missing GPS, buses vanishing mid-trip, timetable-only predictions, canceled trips that ran, GPS units to check).
-- **Rail (left):** Routes (filter which routes are shown, or pick one to zoom to it), Search (stops by name or number, routes by number or name), Alerts, and Settings. Settings and the route filter are saved in your browser.
+- **Rail (left):** Routes (filter which routes are shown, or pick one to zoom to it), Search (stops by name or number, routes by number or name), Alerts, Buses, Analytics, and Settings (theme, rain radar, stops, stop names, 12/24-hour times). Settings and the route filter are saved in your browser.
 - **Theme:** day or night is picked by the time in Broward, unless you choose one in Settings. `?theme=day` or `?theme=night` in the URL overrides both.
-- **Links:** the URL always describes the current view, so you can bookmark or share it. The camera is in the hash (`#zoom/lat/lon/bearing/pitch`); the query string can add `?routes=01,22`, `?stop=0210`, or `?trip=<trip_id>&date=YYYYMMDD`. The detail panel's link button copies it.
+- **Links:** the URL always describes the current view, so you can bookmark or share it. The camera is in the hash (`#zoom/lat/lon`); the query string can add `?routes=01,22`, `?stop=0210`, or `?trip=<trip_id>&date=YYYYMMDD`. The detail panel's link button copies it.
 
 ## Scripts
 
@@ -57,7 +54,7 @@ Open http://localhost:8787. The server relays BCT's live feeds every 10 s; the p
 | `npm run build:site` | Assembles the GitHub Pages site in `_site/`; `API_URL` sets the Worker address. `build:site:local` points it at the local Worker. |
 | `node scripts/make-icons.mjs` | Redraws the app icons in `web/icons/` |
 | `npm run check:feeds` | Reports whether BCT's three GTFS-RT feeds are reachable and fresh, and which fields they fill. |
-| `npm test` | Runs the unit tests: the GTFS-RT decoder, the compact timetable, route-shape snapping, playback and dead-reckoning, departure boards, trip timelines and alerts, reliability, health, search, settings, deep links, and the service-area and slow-device checks. |
+| `npm test` | Runs the unit tests: the GTFS-RT decoder, the compact timetable, route shapes, departure boards, trip timelines and alerts, every recorder and its rules, the Needs attention recommendations, health, search, settings and deep links. |
 
 ## API
 
