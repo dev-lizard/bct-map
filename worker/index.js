@@ -1,30 +1,23 @@
 // The API for the GitHub Pages site, on Cloudflare's free Workers plan. It serves the same
 // endpoints as the Node dev server (server/index.mjs):
 //   GET /api/rt            BCT's live feeds as one protobuf bundle (web/gtfs-rt.js), at most 10 s old
-//   GET /api/weather       current conditions in Fort Lauderdale
 //   GET /api/radar         time and tile URL of the latest rain radar
-//   GET /api/weather-alerts  active National Weather Service alerts for Broward
-//   GET /api/storms        active Atlantic storms' forecast cones (?basin=all for every basin)
 // Analytics endpoints take ?days=N (1-30, default 7) or ?from=YYYYMMDD&to=YYYYMMDD (server/range.mjs).
 //   GET /api/reliability   on-time performance by route, or by hour (?route=ID&days=7)
-//   GET /api/analytics     bunching, cancellations and adherence by weather (?days=7)
+//   GET /api/analytics     bunching, cancellations and rain hours by date (?days=7)
 //   GET /api/segments      measured bus running times between stops (?days=7)
 //   GET /api/bunching-track  both buses' GPS tracks around a bunching event (?key=date|leader|follower)
 //   GET /api/service       service delivered, prediction accuracy, headways, schedule fit (?days=7)
 //   GET /api/health        ok / degraded / down, with the checks behind it (503 when down)
-// A Cron Trigger runs the Recorder (recorder.js) every minute; it logs on-time performance in a
+// A Cron Trigger runs the Recorder (recorder.js) every minute; it records the service analytics in a
 // Durable Object's SQLite database and reports health. Everything else happens in the browser.
 //
 // Caching is per isolate (Cloudflare's Cache API does nothing on workers.dev addresses), so BCT
 // sees roughly one request per 10 s from each isolate the Worker is running in: a handful.
 import { packBundle } from '../web/gtfs-rt.js';
-import { fetchAllFeeds, rollHistory } from '../server/bct-feed.mjs';
-import {
-  ALERTS_TTL_MS, loadRadar, loadStorms, loadWeather, loadWeatherAlerts, loadWeatherHistory, RADAR_TTL_MS, STORMS_TTL_MS,
-  WEATHER_HISTORY_TTL_MS, WEATHER_TTL_MS,
-} from '../server/extras.mjs';
-import { WEATHER_CLASSES, weatherByHour, weatherImpact } from '../server/analytics.mjs';
-import { runningTimeByWeather } from '../server/segments.mjs';
+import { fetchAllFeeds } from '../server/bct-feed.mjs';
+import { loadRadar, loadWeatherHistory, RADAR_TTL_MS, WEATHER_HISTORY_TTL_MS } from '../server/extras.mjs';
+import { rainByDate, weatherByHour } from '../server/analytics.mjs';
 import { rangeParams } from '../server/range.mjs';
 
 export { Recorder } from './recorder.js';
@@ -74,7 +67,6 @@ async function latestBundle() {
     vehiclePositions: feeds.vehiclePositions,
     tripUpdates: feeds.tripUpdates ?? previous?.tripUpdates ?? null,
     alerts: feeds.alerts ?? previous?.alerts ?? null,
-    history: rollHistory(previous, feeds.vehiclePositions),
   };
   rt = { at: Date.now(), parts, body: packBundle(parts), errors: feeds.errors };
   return rt;
@@ -95,11 +87,7 @@ function memo(load, ttlMs) {
     }
   };
 }
-const getWeather = memo(loadWeather, WEATHER_TTL_MS);
 const getRadar = memo(loadRadar, RADAR_TTL_MS);
-const getWeatherAlerts = memo(loadWeatherAlerts, ALERTS_TTL_MS);
-const getStorms = memo(loadStorms, STORMS_TTL_MS);
-const getAllStorms = memo(() => loadStorms({ basins: 'all' }), STORMS_TTL_MS);
 const getWeatherHistory = memo(loadWeatherHistory, WEATHER_HISTORY_TTL_MS);
 
 const recorder = env => env.RECORDER.get(env.RECORDER.idFromName('bct'));
@@ -126,18 +114,15 @@ export default {
           },
         });
       }
-      if (pathname === '/api/weather') return json(await getWeather());
       if (pathname === '/api/radar') return json(await getRadar());
-      if (pathname === '/api/weather-alerts') return json(await getWeatherAlerts());
-      if (pathname === '/api/storms') return json(await (searchParams.get('basin') === 'all' ? getAllStorms() : getStorms()));
       if (pathname === '/api/reliability') {
         return json(await fromRecorder(key, () => recorder(env).summary({ ...rangeParams(searchParams), routeId: searchParams.get('route') })));
       }
       if (pathname === '/api/analytics') {
-        const { hourCounts, ...rest } = await fromRecorder(key, () => recorder(env).analytics(rangeParams(searchParams)));
+        const rest = await fromRecorder(key, () => recorder(env).analytics(rangeParams(searchParams)));
         let weather;
         try {
-          weather = weatherImpact(hourCounts, weatherByHour(await getWeatherHistory()));
+          weather = { byDate: rainByDate(rest.from, rest.to, weatherByHour(await getWeatherHistory())) };
         } catch (err) {
           weather = { error: `Weather history unavailable: ${err.message}` };
         }
@@ -145,13 +130,7 @@ export default {
       }
       if (pathname === '/api/segments') {
         const { hourRows, ...rest } = await fromRecorder(key, () => recorder(env).segments(rangeParams(searchParams)));
-        let weather;
-        try {
-          weather = runningTimeByWeather(hourRows, weatherByHour(await getWeatherHistory()), WEATHER_CLASSES);
-        } catch (err) {
-          weather = { error: `Weather history unavailable: ${err.message}` };
-        }
-        return json({ ...rest, weather });
+        return json(rest);
       }
       if (pathname === '/api/service') return json(await fromRecorder(key, () => recorder(env).service(rangeParams(searchParams))));
       if (pathname === '/api/bunching-track') {
@@ -162,7 +141,7 @@ export default {
         const report = await fromRecorder(key, () => recorder(env).health(), 30_000);
         return json(report, report.status === 'down' ? 503 : 200);
       }
-      if (pathname === '/') return json({ name: 'Broward Transit 3D API', endpoints: ['/api/rt', '/api/weather', '/api/radar', '/api/weather-alerts', '/api/storms', '/api/reliability', '/api/analytics', '/api/segments', '/api/bunching-track', '/api/service', '/api/health'] });
+      if (pathname === '/') return json({ name: 'Broward Transit API', endpoints: ['/api/rt', '/api/radar', '/api/reliability', '/api/analytics', '/api/segments', '/api/bunching-track', '/api/service', '/api/health'] });
       return json({ error: 'Not found' }, 404);
     } catch (err) {
       return json({ error: `Upstream unavailable: ${err.message}` }, 502);

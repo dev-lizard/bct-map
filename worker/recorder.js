@@ -1,16 +1,11 @@
 // The Worker's memory: one Durable Object (a single instance, named "bct") with its own SQLite
 // database. Every minute the Cron Trigger calls tick(), which reads BCT's vehicle positions and
-// trip updates, records each timepoint departure timed from GPS (rules in server/ontime.mjs), and
-// notes how the fetch went for /api/health.
+// trip updates, records what they show, and notes how the fetch went for /api/health. The timetable
+// comes from the GitHub Pages site (PAGES_URL), reloaded when a new build is published.
 //
-// On-time counts are kept per (service date, route, hour), one row per day in `ontime_days`, rather
-// than one row per departure. `seen` has one row per departure (deleted after 3 days) only so a
-// departure is never counted twice. The timetable comes from the GitHub Pages site (PAGES_URL),
-// reloaded when a new build is published.
-//
-// It also measures bus running times between stops from GPS (server/segments.mjs), follows
-// canceled trips (server/cancellations.mjs), keeps bunching replays (server/tracks.mjs) and service
-// analytics (server/service.mjs). Each day of each is one row, saved every tick.
+// It measures bus running times between stops from GPS (server/segments.mjs), keeps the service
+// analytics, on time included (server/service.mjs), follows canceled trips (server/cancellations.mjs)
+// and keeps bunching replays (server/tracks.mjs). Each day of each is one row, saved every tick.
 //
 // Cloudflare may stop the object between ticks, and memory goes with it. So everything a tick
 // needs from the one before (where each bus was along its trip, each trip's GPS progress) is saved
@@ -19,8 +14,7 @@
 // The free plan allows 5 million rows read and 100,000 written a day, and wake-ups happen most
 // minutes. So a wake-up reads only the last two days' per-day rows, the saved state (one row) and
 // the timetable (two rows, kept here gzipped rather than downloaded from Pages each time): about 15.
-// The per-departure and per-event tables (`seen`, `bunching`) are written to and asked about one
-// row at a time, never read whole. Every query is counted, and /api/health shows the day's totals
+// The per-event table (`bunching`) is written to and asked about one row at a time, never read whole. Every query is counted, and /api/health shows the day's totals
 // against those limits.
 import { DurableObject } from 'cloudflare:workers';
 import { decodeFeed, feedTimestamp } from '../web/gtfs-rt.js';
@@ -37,15 +31,12 @@ import { SegmentLog } from '../server/segments.mjs';
 import { TrackLog, trackKey } from '../server/tracks.mjs';
 import { findHubs, ServiceLog } from '../server/service.mjs';
 import { dateRange } from '../server/range.mjs';
-import { addDelay, emptyCount, mergeCount, summarize, timepointDepartures } from '../server/ontime.mjs';
 
 const TIMEZONE = 'America/New_York';
 const KEEP_DAYS = 30; // service days of counts kept
-const SEEN_DAYS = 3; // service days of "already recorded" memory kept
+const SEEN_DAYS = 3; // service days of "already recorded" bunching events kept in memory
 const MANIFEST_CHECK_MS = 10 * 60_000;
 const SEGMENTS_KEEP_DAYS = 31;
-// On-time counts in ontime_days rows, in this order.
-const ONTIME_FIELDS = ['n', 'early', 'late', 'sumDelay', 'veryLate', 'sumLate'];
 const RECENT_DAYS = 2; // days back a wake-up reads the per-day logs for; summaries read more when asked
 
 const gzip = async text => new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
@@ -57,17 +48,14 @@ export const ROWS_WRITTEN_LIMIT = 100_000;
 
 export class Recorder extends DurableObject {
   #loaded = false;
-  // Departures and bunching events recorded since this wake-up, so a tick doesn't ask the database
-  // twice about the same one. The tables are the record: inserts into them say what's new.
-  #seen = new Map(); // service date -> Set of "trip_id|stop_sequence"
-  #ontime = new Map(); // service date -> { "route|hour": [n, early, late, sum of delays] }, days touched since waking
-  #ontimeDirty = new Set();
   #usage = null; // { day (UTC, YYYY-MM-DD), read, written }: database rows today, against the free plan
   #lastTick = null; // the last tick's status, for the next tick and /api/health
   #daysFrom = null; // the earliest date the per-day logs have been read from the database for
   #cancellations = new CancellationLog({ timezone: TIMEZONE }); // one row per day in cancel_days
   #tracks = new TrackLog(); // bunching replays, one row per day in track_days
   #service = new ServiceLog({ timezone: TIMEZONE }); // service analytics, one row per day in service_days
+  // Bunching events recorded since this wake-up, so a tick doesn't ask the database twice about the
+  // same one. The table is the record: an insert into it says what's new.
   #eventSeen = { bunch: new Map() }; // service date -> Set of event keys
   #schedule = null;
   #stops = null; // stop id -> { lat, lon }, for measuring running times
@@ -79,12 +67,6 @@ export class Recorder extends DurableObject {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS seen (date TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (date, key)) WITHOUT ROWID;
-      CREATE TABLE IF NOT EXISTS counts (
-        date TEXT NOT NULL, route TEXT NOT NULL, hour INTEGER NOT NULL,
-        n INTEGER NOT NULL, early INTEGER NOT NULL, late INTEGER NOT NULL, sum_delay INTEGER NOT NULL,
-        PRIMARY KEY (date, route, hour)
-      ) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS bunching (
         date TEXT NOT NULL, leader TEXT NOT NULL, follower TEXT NOT NULL, route TEXT, direction INTEGER, stop TEXT,
@@ -95,7 +77,6 @@ export class Recorder extends DurableObject {
       CREATE TABLE IF NOT EXISTS cancel_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS track_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS service_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
-      CREATE TABLE IF NOT EXISTS ontime_days (date TEXT PRIMARY KEY, data TEXT NOT NULL) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS timetable (name TEXT PRIMARY KEY, folder TEXT NOT NULL, data BLOB NOT NULL) WITHOUT ROWID;
       DROP TABLE IF EXISTS canceled;
     `);
@@ -137,7 +118,6 @@ export class Recorder extends DurableObject {
     const passages = [];
     if (vehicles && this.#schedule && this.#stops) {
       status.runs = this.#segments.observe(vehicles, { trips: this.#schedule.trips, stops: this.#stops, onPass: p => passages.push(p) });
-      status.recorded = this.#record(passages);
       this.#tracks.observe(vehicles, nowS);
     }
     if (feeds.tripUpdates && this.#schedule) {
@@ -148,7 +128,8 @@ export class Recorder extends DurableObject {
         liveTrips: live.trips.values(), trips: this.#schedule.trips, feedTs: live.feedTs, busOnTrip,
         alerts: alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null), passages,
       });
-      this.#service.observe({ vehicles, liveTrips: live.trips.values(), passages, trips: this.#schedule.trips, feedTs: live.feedTs, nowS });
+      status.recorded = this.#service.observe({ vehicles, liveTrips: live.trips.values(), passages, trips: this.#schedule.trips, feedTs: live.feedTs, nowS });
+      if (status.recorded && this.#get('since') == null) this.#set('since', Math.floor(nowS));
     }
     this.#prune();
     this.#saveDaily();
@@ -169,25 +150,16 @@ export class Recorder extends DurableObject {
   async summary({ days = 7, from = null, to = null, routeId = null } = {}) {
     this.#load();
     const range = dateRange({ days, from, to, timezone: TIMEZONE });
-    return summarize(this.#ontimeCounts(range.from, range.to), { days: range.days, routeId, collectingSince: this.#get('since') });
+    this.#ensureDays(range.from);
+    return this.#service.ontime({ from: range.from, to: range.to, routeId, collectingSince: this.#get('since') });
   }
 
-  // Bunching and cancellations for the last `days` service days, plus hourly on-time counts by
-  // calendar date for the Worker to set against the weather.
+  // Bunching and cancellations for the last `days` service days.
   async analytics({ days = 7, from = null, to = null } = {}) {
     this.#load();
     const range = dateRange({ days, from, to, timezone: TIMEZONE });
     const opts = { days, from: range.from, to: range.to, timezone: TIMEZONE };
     this.#ensureDays(range.from);
-    const hours = new Map();
-    for (const c of this.#ontimeCounts(range.from, range.to)) {
-      // Counts are by service date; departures before 4 AM belong to the previous day's service.
-      const date = c.hour < 4 ? addDays(c.date, 1) : c.date;
-      const key = `${date}|${c.hour}`;
-      if (!hours.has(key)) hours.set(key, { date, hour: c.hour, ...emptyCount() });
-      const h = hours.get(key);
-      mergeCount(h, c);
-    }
     return {
       windowDays: range.days,
       from: range.from,
@@ -195,12 +167,10 @@ export class Recorder extends DurableObject {
       collectingSince: this.#get('analyticsSince'),
       bunching: (b => ({ ...b, recent: b.recent.map(e => ({ ...e, track: this.#tracks.status(trackKey(e)) })) }))(summarizeBunching(this.#bunchingSince(range.from, range.to), opts)),
       cancellations: this.#cancellations.summary(opts),
-      hourCounts: [...hours.values()],
     };
   }
 
-  // Measured running times between stops for the last `days` days, with hourly network totals for
-  // the Worker to set against the weather.
+  // Measured running times between stops for the last `days` days.
   async segments({ days = 7, from = null, to = null } = {}) {
     this.#load();
     const range = dateRange({ days, from, to, timezone: TIMEZONE });
@@ -259,53 +229,6 @@ export class Recorder extends DurableObject {
     };
   }
 
-  // passages: stops buses were seen to pass (SegmentLog.observe's onPass). A departure counts only
-  // if its row in `seen` is new, which also covers ones recorded before a wake-up.
-  #record(passages) {
-    const schedule = this.#schedule;
-    let recorded = 0;
-    let first = null;
-    this.ctx.storage.transactionSync(() => {
-      for (const d of timepointDepartures(passages, schedule.trips, { timezone: TIMEZONE, seen: date => this.#seenFor(date) })) {
-        if (!this.#exec('INSERT OR IGNORE INTO seen (date, key) VALUES (?, ?)', d.date, `${d.tripId}|${d.seq}`).written) continue;
-        const day = this.#ontimeDay(d.date);
-        // [n, early, late, sum of delays, very late, sum of late delays] (days saved before Oct 29
-        // have only the first four).
-        const count = (day[`${d.routeId}|${d.hour}`] ??= [0, 0, 0, 0, 0, 0]);
-        const c = addDelay(emptyCount(), d.delay);
-        ONTIME_FIELDS.forEach((k, i) => { count[i] = (count[i] ?? 0) + c[k]; });
-        this.#ontimeDirty.add(d.date);
-        recorded++;
-        first = Math.min(first ?? d.time, d.time);
-      }
-      if (recorded && this.#get('since') == null) this.#set('since', first);
-    });
-    return recorded;
-  }
-
-  // One service date's on-time counts, read from the database the first time it's needed.
-  #ontimeDay(date) {
-    if (!this.#ontime.has(date)) {
-      const row = this.#exec('SELECT data FROM ontime_days WHERE date = ?', date).rows[0];
-      this.#ontime.set(date, row ? JSON.parse(row.data) : {});
-    }
-    return this.#ontime.get(date);
-  }
-
-  // On-time counts for service dates from..to, as { date, routeId, hour, n, early, late, sumDelay }.
-  #ontimeCounts(from, to) {
-    const out = [];
-    for (const { date, data } of this.#exec('SELECT date, data FROM ontime_days WHERE date >= ? AND date <= ?', from, to).rows) {
-      // Today's may have changes not saved yet.
-      const day = this.#ontime.get(date) ?? JSON.parse(data);
-      for (const [key, values] of Object.entries(day)) {
-        const [routeId, hour] = key.split('|');
-        out.push({ date, routeId, hour: Number(hour), ...Object.fromEntries(ONTIME_FIELDS.map((k, i) => [k, values[i] ?? 0])) });
-      }
-    }
-    return out;
-  }
-
   // New bunching events in the latest trip updates. An event is new if its row in `bunching` is.
   #analyze({ feedTs, trips }, busOnTrip) {
     const live = [...trips.values()];
@@ -345,8 +268,6 @@ export class Recorder extends DurableObject {
         }
         log.dirty.clear();
       }
-      for (const date of this.#ontimeDirty) upsert('ontime_days', date, JSON.stringify(this.#ontime.get(date)));
-      this.#ontimeDirty.clear();
     });
   }
 
@@ -356,8 +277,6 @@ export class Recorder extends DurableObject {
     if (this.#get('prunedFor') === today) return;
     const seenFrom = addDays(today, -SEEN_DAYS);
     const countsFrom = addDays(today, -(KEEP_DAYS - 1));
-    this.#exec('DELETE FROM seen WHERE date < ?', seenFrom);
-    this.#exec('DELETE FROM ontime_days WHERE date < ?', countsFrom);
     this.#exec('DELETE FROM bunching WHERE date < ?', countsFrom);
     this.#cancellations.prune(countsFrom);
     this.#exec('DELETE FROM cancel_days WHERE date < ?', countsFrom);
@@ -370,8 +289,6 @@ export class Recorder extends DurableObject {
     this.#segments.prune(segmentsFrom);
     this.#exec('DELETE FROM segment_days WHERE date < ?', segmentsFrom);
     for (const map of Object.values(this.#eventSeen)) for (const date of map.keys()) if (date < seenFrom) map.delete(date);
-    for (const date of this.#seen.keys()) if (date < seenFrom) this.#seen.delete(date);
-    for (const date of this.#ontime.keys()) if (date < seenFrom) this.#ontime.delete(date);
     this.#set('prunedFor', today);
   }
 
@@ -379,29 +296,6 @@ export class Recorder extends DurableObject {
   // The per-departure and per-event tables are only queried a row or a window at a time.
   #load() {
     if (this.#loaded) return;
-    // On-time counts made from trip-update times (before GPS timing) aren't comparable: start over.
-    if (this.#get('ontimeSource') !== 'gps') {
-      this.ctx.storage.transactionSync(() => {
-        this.#exec('DELETE FROM counts');
-        this.#exec('DELETE FROM ontime_days');
-        this.#exec('DELETE FROM seen');
-        this.#exec("DELETE FROM state WHERE k = 'since'");
-        this.#set('ontimeSource', 'gps');
-      });
-    }
-    // Once: on-time counts move from one row per (date, route, hour) to one row per date.
-    if (this.#get('ontimeStore') !== 'days') {
-      this.ctx.storage.transactionSync(() => {
-        const days = new Map();
-        for (const r of this.#exec('SELECT * FROM counts').rows) {
-          if (!days.has(r.date)) days.set(r.date, {});
-          days.get(r.date)[`${r.route}|${r.hour}`] = [r.n, r.early, r.late, r.sum_delay];
-        }
-        for (const [date, day] of days) this.#exec('INSERT OR REPLACE INTO ontime_days (date, data) VALUES (?, ?)', date, JSON.stringify(day));
-        this.#exec('DELETE FROM counts');
-        this.#set('ontimeStore', 'days');
-      });
-    }
     // Ticks only touch today's and yesterday's rows (trips past midnight belong to yesterday's
     // service), so a wake-up reads those; summaries read further back when asked (#ensureDays).
     this.#daysFrom = addDays(ymdInZone(new Date(), TIMEZONE), -RECENT_DAYS);
@@ -424,6 +318,28 @@ export class Recorder extends DurableObject {
       this.#usage.written += saved.usage.written;
     }
     this.#loaded = true;
+    this.#moveOntime();
+  }
+
+  // Once: on-time counts move from their own table (`ontime_days`, with `seen` to stop a departure
+  // being counted twice) into each day's service row, beside the rest of the service analytics.
+  #moveOntime() {
+    if (this.#get('ontimeStore') === 'service') return;
+    let rows = [];
+    try {
+      rows = this.#exec('SELECT date, data FROM ontime_days ORDER BY date').rows;
+    } catch {
+      // No table: a new database.
+    }
+    if (rows.length) {
+      this.#ensureDays(rows[0].date); // the service rows for those days, so nothing is overwritten
+      for (const r of rows) this.#service.adoptOntime(r.date, JSON.parse(r.data));
+      this.#saveDaily();
+    }
+    this.ctx.storage.transactionSync(() => {
+      for (const table of ['ontime_days', 'seen', 'counts']) this.#exec(`DROP TABLE IF EXISTS ${table}`);
+      this.#set('ontimeStore', 'service');
+    });
   }
 
   // The per-day logs and their tables.
@@ -477,11 +393,6 @@ export class Recorder extends DurableObject {
     this.#stops = new Map(stops.map(([id, , lat, lon]) => [id, { lat, lon }]));
     this.#service.setHubs(findHubs(stops, this.#schedule), this.#schedule);
     this.#folder = folder;
-  }
-
-  #seenFor(date) {
-    if (!this.#seen.has(date)) this.#seen.set(date, new Set());
-    return this.#seen.get(date);
   }
 
   #get(key) {

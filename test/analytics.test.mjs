@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  bunchKey, classifyRain, findBunching, hourCountsFromSamples, newEvents, summarizeBunching, weatherByHour, weatherImpact,
+  bunchKey, classifyRain, findBunching, newEvents, rainByDate, summarizeBunching, weatherByHour,
 } from '../server/analytics.mjs';
 import { serviceDayStart } from '../web/gtfs-util.js';
 
@@ -73,29 +73,6 @@ test('weather classes from station rain: the wettest station decides the hour', 
   assert.deepEqual([...weatherByHour(csv)], [['20261023|12', 'heavy'], ['20261023|13', 'dry'], ['20261023|23', 'rain']]);
 });
 
-test('weather impact compares each class with dry weather at the same hours of the day', () => {
-  const c = (date, hour, n, late, sumDelay) => ({ date, hour, n, early: 0, late, sumDelay });
-  const counts = [
-    c('20261020', 8, 100, 10, 6000), // dry 8 AM: 90% on time, mean 60 s
-    c('20261020', 17, 100, 30, 18000), // dry 5 PM: 70% on time, mean 180 s
-    c('20261021', 17, 50, 25, 15000), // rainy 5 PM: 50% on time, mean 300 s
-    c('20261022', 8, 10, 0, 0), // no weather for this hour
-  ];
-  const weather = new Map([['20261020|8', 'dry'], ['20261020|17', 'dry'], ['20261021|17', 'rain']]);
-  const w = weatherImpact(counts, weather);
-  const [dry, rain, heavy] = w.classes;
-  assert.deepEqual([dry.samples, dry.onTimePct, rain.samples, rain.onTimePct, rain.meanDelayS], [200, 80, 50, 50, 300]);
-  // Raw, rain looks 30 points worse than dry; against dry 5 PMs only, it's 20 points worse.
-  assert.deepEqual(rain.vsDry, { onTimePts: -20, meanDelayS: 120, samples: 50 });
-  assert.equal(heavy.samples, 0);
-  assert.equal(w.unmatchedSamples, 10);
-});
-
-test('hourly counts from reliability samples use the calendar date in Broward', () => {
-  const counts = hourCountsFromSamples([[day + 8 * H, 'R1', 30, 8], [day + 8 * H + 60, 'R2', 400, 8], [day + 24 * H + 600, 'R1', -90, 0]], TZ);
-  assert.deepEqual(counts.map(c => [c.date, c.hour, c.n, c.late, c.early]), [['20261023', 8, 2, 1, 0], ['20261024', 0, 1, 0, 1]]);
-});
-
 test('bunching with the vehicle feed: trips without a bus, and two trips of one bus, don\'t count', () => {
   const t1 = live('T1', 2, 'B', { 2: day + 8 * H + 2340 });
   const t2 = live('T2', 2, 'B', { 2: day + 8 * H + 2400 });
@@ -103,4 +80,9 @@ test('bunching with the vehicle feed: trips without a bus, and two trips of one 
   assert.equal(find(new Map([['T1', 'bus1'], ['T2', 'bus2']])), 1);
   assert.equal(find(new Map([['T1', 'bus1']])), 0); // nobody is driving T2 yet
   assert.equal(find(new Map([['T1', 'bus1'], ['T2', 'bus1']])), 0);
+});
+
+test('rain hours by date, for marking rainy days', () => {
+  const weather = new Map([['20261020|8', 'rain'], ['20261020|9', 'heavy'], ['20261020|10', 'dry'], ['20261021|17', 'rain'], ['20261030|1', 'rain']]);
+  assert.deepEqual(rainByDate('20261020', '20261022', weather), { 20261020: [1, 1], 20261021: [1, 0], 20261022: [0, 0] });
 });

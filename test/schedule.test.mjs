@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
-import { rollHistory } from '../server/bct-feed.mjs';
 import { decodeFeed } from '../web/gtfs-rt.js';
 import { LiveFeed } from '../web/live.js';
 import { packSchedule, Schedule } from '../web/schedule.js';
@@ -41,14 +40,6 @@ const vehicleFeed = (ts, lat) => FeedMessage.encode(FeedMessage.fromObject({
   header: { gtfsRealtimeVersion: '2.0', timestamp: ts },
   entity: [{ id: '1', vehicle: { trip: { tripId: 'T1' }, position: { latitude: lat, longitude: -80.1 }, timestamp: ts, vehicle: { id: 'bus' } } }],
 })).finish();
-
-test('rollHistory keeps up to three older, distinct vehicle feeds from the last two minutes', () => {
-  const at = ts => vehicleFeed(ts, 26.1);
-  const history = rollHistory({ vehiclePositions: at(1000), history: [at(880), at(970), at(980), at(990)] }, at(1010));
-  assert.deepEqual(history.map(b => decodeFeed(b).header.timestamp), [980, 990, 1000]);
-  assert.deepEqual(rollHistory({ vehiclePositions: at(1010), history: [] }, at(1010)), []); // same feed again
-  assert.deepEqual(rollHistory(null, at(1010)), []);
-});
 
 test('a page that has just opened gets each bus\'s previous report from the history', () => {
   const live = new LiveFeed({ schedule: plain, routes: [{ route_id: 'R1', route_short_name: '1', route_color: 'E35335' }], stops: [] });

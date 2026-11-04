@@ -1,24 +1,21 @@
 // The Node server, for local development and for hosting on your own machine. In production the
 // same API comes from a Cloudflare Worker (worker/) and the site from GitHub Pages (docs/DEPLOY.md).
 // It polls BCT's GTFS-RT feeds on a timer (never per request), rebuilds the static timetable every
-// night, logs on-time performance, and serves
+// night, records service analytics, and serves
 //   GET /api/rt                            BCT's three live feeds as one protobuf bundle (web/gtfs-rt.js)
 // Analytics endpoints take ?days=N (1-30, default 7) or ?from=YYYYMMDD&to=YYYYMMDD (server/range.mjs).
 //   GET /api/reliability                   on-time performance by route, or by hour (?route=ID&days=7)
-//   GET /api/analytics                     bunching, cancellations and adherence by weather (?days=7)
+//   GET /api/analytics                     bunching, cancellations and rain hours by date (?days=7)
 //   GET /api/segments                      measured bus running times between stops (?days=7)
 //   GET /api/bunching-track                both buses' GPS tracks around a bunching event (?key=date|leader|follower)
 //   GET /api/service                       service delivered, prediction accuracy, headways, schedule fit (?days=7)
-//   GET /api/weather                       current conditions in Fort Lauderdale
 //   GET /api/radar                         time and tile URL of the latest rain radar
-//   GET /api/weather-alerts                active National Weather Service alerts for Broward
-//   GET /api/storms                        active Atlantic storms' forecast cones (?basin=all for every basin)
 //   GET /api/health                        ok / degraded / down, with the checks behind it (503 when down)
 //   GET /data/...                          static GTFS output from scripts/build-static.mjs
 //   GET /...                               the web app in web/
 // The browser does the rest (web/live.js): vehicles, delays, departure boards and trip timelines.
 //
-// Run exactly one instance: the feed poller, nightly rebuild and reliability log all live in this
+// Run exactly one instance: the feed poller, nightly rebuild and the logs all live in this
 // process. Environment: PORT (8787), REFRESH_MS (10000), NIGHTLY_BUILD_AT ("03:30" Broward time, or "off").
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -28,17 +25,17 @@ import zlib from 'node:zlib';
 import { decodeFeed, feedTimestamp, packBundle } from '../web/gtfs-rt.js';
 import { summarizeTripUpdates } from '../web/live.js';
 import { Schedule } from '../web/schedule.js';
-import { fetchAllFeeds, rollHistory } from './bct-feed.mjs';
-import { busesOnTrips, hourCountsFromSamples, WEATHER_CLASSES, weatherByHour, weatherImpact } from './analytics.mjs';
+import { fetchAllFeeds } from './bct-feed.mjs';
+import { busesOnTrips, rainByDate, weatherByHour } from './analytics.mjs';
 import { AnalyticsLog } from './analytics-log.mjs';
 import { alertsByTrip, CancellationLog } from './cancellations.mjs';
-import { getRadar, getStormsFor, getWeather, getWeatherAlerts, getWeatherHistory } from './extras.mjs';
+import { getRadar, getWeatherHistory } from './extras.mjs';
 import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
 import { healthReport } from './health.mjs';
-import { ReliabilityLog } from './reliability.mjs';
-import { runningTimeByWeather, SegmentLog } from './segments.mjs';
+import { SegmentLog } from './segments.mjs';
 import { TrackLog, trackKey } from './tracks.mjs';
 import { findHubs, ServiceLog } from './service.mjs';
+import { addDelayTo } from './ontime.mjs';
 import { dateRange, rangeParams } from './range.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -56,13 +53,12 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
   '.geojson': 'application/geo+json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.geojson', '.svg']);
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.geojson', '.svg']);
 const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'strict-origin-when-cross-origin' };
 
 // ---- Static timetable ------------------------------------------------------------------------
@@ -118,11 +114,6 @@ try {
 }
 
 const timezone = staticData.schedule.meta.timezone;
-// On-time stats from GPS-timed timepoint departures. (data/reliability/ holds the earlier log, made
-// from trip-update times; it isn't read any more.)
-const reliability = new ReliabilityLog({ dir: path.join(ROOT, 'data', 'ontime'), timezone });
-await reliability.load();
-console.log(`Reliability: ${reliability.samples.length} timepoint departures on record`);
 const analytics = new AnalyticsLog({ dir: path.join(ROOT, 'data', 'analytics'), timezone });
 await analytics.load();
 const analyticsSince = Math.min(Date.now() / 1000, ...analytics.bunching.map(e => e.at));
@@ -157,6 +148,25 @@ async function saveDailyLogs() {
 }
 const dailyTimer = setInterval(() => saveDailyLogs().catch(err => console.error(`[daily logs] could not save: ${err.message}`)), DAILY_SAVE_MS);
 console.log(`Segments: ${segments.dates().length} days of running times; cancellations: ${cancellations.dates().length} days on record`);
+
+// Once: on-time departures logged in data/ontime/ (one file per service date, one departure per
+// line: [unix time, route, trip, stop sequence, delay s, hour]) move into the service log's days.
+const ONTIME_DIR = path.join(ROOT, 'data', 'ontime');
+for (const file of await fs.readdir(ONTIME_DIR).catch(() => [])) {
+  if (!/^\d{8}\.jsonl$/.test(file)) continue;
+  const byRouteHour = {};
+  for (const line of (await fs.readFile(path.join(ONTIME_DIR, file), 'utf8')).split('\n')) {
+    if (!line.trim()) continue;
+    const [, route, , , delay, hour] = JSON.parse(line);
+    addDelayTo((byRouteHour[`${route}|${hour}`] ??= []), delay);
+  }
+  service.adoptOntime(file.slice(0, 8), byRouteHour);
+}
+if (service.dirty.size) {
+  await saveDailyLogs();
+  await fs.rm(ONTIME_DIR, { recursive: true, force: true });
+  console.log('On time: moved data/ontime/ into the service log');
+}
 
 // ---- Nightly rebuild -------------------------------------------------------------------------
 
@@ -211,7 +221,7 @@ function scheduleNightlyBuild() {
 let lastRefreshS = null;
 let vehicleFeedS = null;
 let feedErrors = [];
-// The latest bundle: its raw parts (to carry over a feed BCT fails to return, and for history),
+// The latest bundle: its raw parts (to carry over a feed BCT fails to return),
 // and the serialised body, gzipped once per refresh rather than per request.
 let bundle = { parts: null, body: null, gz: null };
 
@@ -224,7 +234,6 @@ async function refresh() {
     vehiclePositions: feeds.vehiclePositions,
     tripUpdates: feeds.tripUpdates ?? previous?.tripUpdates ?? null,
     alerts: feeds.alerts ?? previous?.alerts ?? null,
-    history: rollHistory(previous, feeds.vehiclePositions),
   };
   const body = Buffer.from(packBundle(parts));
   bundle = { parts, body, gz: zlib.gzipSync(body) };
@@ -238,7 +247,6 @@ async function refresh() {
   const passages = [];
   const runs = segments.observe(vehicles, { trips: schedule.trips, stops, onPass: p => passages.push(p) });
   tracks.observe(vehicles);
-  recorded = reliability.observe(passages, schedule.trips);
   if (feeds.tripUpdates) {
     const { feedTs, trips } = summarizeTripUpdates(decodeFeed(feeds.tripUpdates), { trips: schedule.trips, timezone });
     const busOnTrip = busesOnTrips(vehicles);
@@ -247,13 +255,13 @@ async function refresh() {
     bunches = newBunches.length;
     const alerts = alertsByTrip(feeds.alerts ? decodeFeed(feeds.alerts) : null);
     canceled = cancellations.observe({ liveTrips: trips.values(), trips: schedule.trips, feedTs, busOnTrip, alerts, passages });
-    service.observe({ vehicles, liveTrips: trips.values(), passages, trips: schedule.trips, feedTs, nowS: Date.now() / 1000 });
+    recorded = service.observe({ vehicles, liveTrips: trips.values(), passages, trips: schedule.trips, feedTs, nowS: Date.now() / 1000 });
   } else {
-    service.observe({ vehicles, passages, trips: schedule.trips, nowS: Date.now() / 1000 });
+    recorded = service.observe({ vehicles, passages, trips: schedule.trips, nowS: Date.now() / 1000 });
   }
   const kb = n => `${Math.round(n / 1024)} KB`;
   const errors = feedErrors.length ? ` (partial: ${feedErrors.join('; ')})` : '';
-  console.log(`[feed] bundle ${kb(body.length)} (${kb(bundle.gz.length)} gzipped), ${parts.history.length} older vehicle feeds, ${recorded} departures recorded, ${bunches} bunching, ${canceled} cancellations, ${runs} stop-to-stop runs${errors}`);
+  console.log(`[feed] bundle ${kb(body.length)} (${kb(bundle.gz.length)} gzipped), ${recorded} departures timed, ${bunches} bunching, ${canceled} cancellations, ${runs} stop-to-stop runs${errors}`);
 }
 
 async function refreshLoop() {
@@ -289,7 +297,6 @@ function health() {
     folder: staticData.folder,
     lastBuild,
     nextBuild: NIGHTLY_BUILD_AT === 'off' ? null : new Date(nextBuildAt(Date.now(), NIGHTLY_BUILD_AT)).toISOString(),
-    reliabilitySamples: reliability.samples.length,
     uptimeS: Math.round(process.uptime()),
   };
 }
@@ -389,11 +396,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/analytics') {
     const period = rangeParams(searchParams);
     const range = dateRange({ ...period, timezone });
-    const since = serviceDayStart(range.from, timezone);
-    const until = serviceDayStart(addDays(range.to, 1), timezone);
     let weather;
     try {
-      weather = weatherImpact(hourCountsFromSamples(reliability.samples.filter(s => s[0] >= since && s[0] < until), timezone), weatherByHour(await getWeatherHistory()));
+      weather = { byDate: rainByDate(range.from, range.to, weatherByHour(await getWeatherHistory())) };
     } catch (err) {
       weather = { error: `Weather history unavailable: ${err.message}` };
     }
@@ -410,29 +415,15 @@ const server = http.createServer(async (req, res) => {
     return track ? sendJson(req, res, 200, track) : sendJson(req, res, 404, { error: 'No track for this event' });
   }
   if (pathname === '/api/segments') {
-    const result = segments.query(rangeParams(searchParams));
-    let weather;
-    try {
-      weather = runningTimeByWeather(result.hourRows, weatherByHour(await getWeatherHistory()), WEATHER_CLASSES);
-    } catch (err) {
-      weather = { error: `Weather history unavailable: ${err.message}` };
-    }
-    const { hourRows, ...rest } = result;
-    return sendJson(req, res, 200, { ...rest, weather });
+    const { hourRows, ...rest } = segments.query(rangeParams(searchParams));
+    return sendJson(req, res, 200, rest);
   }
   if (pathname === '/api/reliability') {
-    const summary = reliability.summary({ ...rangeParams(searchParams), routeId: searchParams.get('route') });
-    return sendJson(req, res, 200, summary);
+    return sendJson(req, res, 200, service.ontime({ ...rangeParams(searchParams), routeId: searchParams.get('route'), collectingSince: Math.floor(analyticsSince) }));
   }
-  const extras = {
-    '/api/weather': getWeather,
-    '/api/radar': getRadar,
-    '/api/weather-alerts': getWeatherAlerts,
-    '/api/storms': () => getStormsFor(searchParams.get('basin')),
-  };
-  if (extras[pathname]) {
+  if (pathname === '/api/radar') {
     try {
-      return sendJson(req, res, 200, await extras[pathname]());
+      return sendJson(req, res, 200, await getRadar());
     } catch (err) {
       return sendJson(req, res, 502, { error: `Upstream unavailable: ${err.message}` });
     }
@@ -444,14 +435,14 @@ const server = http.createServer(async (req, res) => {
   return serveFile(req, res, WEB_DIR, pathname);
 });
 
-server.listen(PORT, () => console.log(`Broward Transit 3D on http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`Broward Transit on http://localhost:${PORT}`));
 refreshLoop();
 scheduleNightlyBuild();
 
 // ---- Shutdown --------------------------------------------------------------------------------
 
 // On SIGTERM (container stop, deploy) or Ctrl+C: stop taking requests and polling, and finish
-// writing the reliability log before exiting.
+// writing the logs before exiting.
 let stopping = false;
 async function shutdown(signal) {
   if (stopping) return;
@@ -460,7 +451,7 @@ async function shutdown(signal) {
   clearTimeout(pollTimer);
   server.close();
   clearInterval(dailyTimer);
-  await Promise.all([reliability.flush(), analytics.flush(), saveDailyLogs().catch(() => {})]);
+  await Promise.all([analytics.flush(), saveDailyLogs().catch(() => {})]);
   process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

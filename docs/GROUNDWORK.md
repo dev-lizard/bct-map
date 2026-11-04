@@ -600,6 +600,14 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Service worker:** `web/sw.js` is now a stub that deletes the old caches and unregisters itself, so browsers that installed the app drop it. Nothing registers it any more.
 - **Settings:** theme, rain radar, stops, stop names, 12/24-hour time.
 
+**Phase 29 — one recorder for on time; fewer endpoints ✅ (built; the Worker's move not yet run)**
+
+- **On time recorded once.** It was recorded twice: by its own log (`ontime_days` with a `seen` row per departure in the Worker, `data/ontime/` and `server/reliability.mjs` in Node) and by the service log. Now only the service log keeps it: each day's row gains `ontimeHour` ("route|hour" → `ONTIME_FIELDS` counts, by service date), and `/api/reliability` is `ServiceLog.ontime()` (`summarize` in `server/ontime.mjs`). A trip's last stop is an arrival and no longer counts as a departure anywhere (it still counted in the service log's own on-time and on-time-by-trip).
+- **Moved once:** on its first wake-up the Durable Object copies each `ontime_days` row into that day's service row (days that already have their own are left alone), then drops `ontime_days`, `seen` and the old `counts` table (state `ontimeStore = 'service'`). The Node server does the same from `data/ontime/*.jsonl` and then removes the folder; locally every figure carried over (9,139 departures in the last 7 days before, the same after).
+- **Cloudflare:** about 10,000 fewer rows written a day (one `seen` insert per timepoint departure) and one fewer day row saved per tick; the move itself writes about 30 rows once.
+- **Removed endpoints:** `/api/weather`, `/api/weather-alerts` and `/api/storms` (and Open-Meteo, api.weather.gov and NHC with them). `/api/radar` stays for the radar layer; the airport rain history stays, reduced to rain hours by date (`rainByDate`) for the ☂ on the by-day charts. Weather classes, on time by weather and running time by weather are gone with the Weather tab.
+- **`/api/rt`** no longer carries the three older vehicle feeds (about 60 KB on every 10-second poll, kept for the old playback). The bundle format still allows them.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---
@@ -637,15 +645,15 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 | `web/api.js`, `web/runtime-config.js` | Where the API lives (same origin locally, the Worker on Pages) | ✅ |
 | `worker/`, `wrangler.toml` | Cloudflare Worker and its Recorder Durable Object | ✅ `wrangler dev` with a cron tick; not deployed |
 | `.github/workflows/` | Deploy the site to Pages and the Worker to Cloudflare | ⚠️ not run yet |
-| `server/bct-feed.mjs` | Fetches BCT's raw feeds, merges in the contracted routes' (TrackTrolley) feeds, keeps older vehicle feeds for the bundle | ✅ 2 tests, live |
-| `server/index.mjs` | Dev and self-hosting server: `/api/rt`, `/api/reliability`, `/api/weather`, `/api/radar`, `/api/health`, static files | ✅ in a browser |
+| `server/bct-feed.mjs` | Fetches BCT's raw feeds and merges in the contracted routes' (TrackTrolley) feeds | ✅ tested, live |
+| `server/index.mjs` | Dev and self-hosting server: `/api/rt`, the analytics endpoints, `/api/radar`, `/api/health`, static files | ✅ in a browser |
 | `web/panel.js` | Stop departure board and trip timeline panel, with "Copy link" | ✅ Clicked through in a browser against live data |
 | `web/sidebar.js` | Rail plus routes, search, alerts and settings panels | ✅ Each panel opened in a browser against live data |
 | `web/search.js`, `web/settings.js`, `web/links.js` | Stop and route search, saved settings, deep links | ✅ 10 tests in `test/shell.test.mjs`; deep link and search checked in a browser |
 | `web/dom.js` | Shared DOM helpers: elements, route badges, time formatting, icons | ✅ via the above |
 | `web/device.js` | Service area, distance outside it, and the slow-device check | ✅ 4 tests in `test/device.test.mjs`; location notices checked in a browser with a faked position |
 | `server/extras.mjs` | Weather and radar time, behind a shared cache | ✅ 2 tests; live endpoints checked |
-| `server/reliability.mjs`, `server/ontime.mjs` | Timepoint departure log (Node) and the on-time rules shared with the Worker | ✅ 4 tests; recording live since 2026-10-22, panel checked in a browser |
+| `server/ontime.mjs` | The on-time rules and summaries (recorded by `server/service.mjs`) | ✅ tested in `test/service.test.mjs`; recording live since 2026-10-22 |
 | `web/gtfs-util.js` | CSV parser, GTFS time and service-day math, geo helpers | ✅ via the above |
 | `scripts/check-feeds.mjs` | Feed health and field-coverage report | ✅ |
 | `server/health.mjs` | ok / degraded / down rules for `/api/health` | ✅ 4 tests; checked live |

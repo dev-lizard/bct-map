@@ -62,17 +62,14 @@ Served by the Cloudflare Worker (`worker/`) when deployed, and by `server/index.
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/rt` | BCT's vehicle positions, trip updates and alerts as raw protobuf in one bundle, plus up to three older vehicle feeds (format in `web/gtfs-rt.js`). `X-Server-Time` gives the server's clock. |
-| `GET /api/segments` | Measured bus running times for every stretch between stops, per time of day, plus running time by weather (`?days=7`, up to 30) |
+| `GET /api/rt` | BCT's vehicle positions, trip updates and alerts as raw protobuf in one bundle (format in `web/gtfs-rt.js`). `X-Server-Time` gives the server's clock. |
+| `GET /api/segments` | Measured bus running times for every stretch between stops, per time of day (`?days=7`, up to 30) |
 | (analytics endpoints) | `/api/reliability`, `/api/analytics`, `/api/segments` and `/api/service` take `?days=N` (1 to 30, default 7) or `?from=YYYYMMDD&to=YYYYMMDD` (within the last 30 days) |
-| `GET /api/service` | Service delivered (trips run, missed without notice, canceled), prediction accuracy by lead time, headway sums for excess wait, running times and start delays by trip, delay by timepoint, transfers at hubs, feed quality, and day-by-day series for trends (`?days=7`, up to 30) |
+| `GET /api/service` | Service delivered (trips run, missed without notice, canceled), prediction accuracy by lead time, headway sums for excess wait, running times and start delays by trip and running-time bands, delay by timepoint, transfers at hubs with how long riders had, on time by trip, feed quality by day, route and bus, and day-by-day series (`?days=7`, up to 30) |
 | `GET /api/bunching-track` | Both buses' GPS tracks from 15 minutes before to 15 after a bunching event (`?key=<service date>|<leading trip>|<following trip>`) |
-| `GET /api/analytics` | Bunching events, canceled trips, and on-time stats by weather, each with counts by date (`?days=7`, up to 30) |
-| `GET /api/reliability` | On-time / early / late shares at timepoints, by route, or by hour for one route (`?route=BCT22&days=7`) |
-| `GET /api/weather` | Current conditions in Fort Lauderdale (cached 10 minutes) |
+| `GET /api/analytics` | Bunching events and canceled trips, each with counts by date, and rain hours by date (`?days=7`, up to 30) |
+| `GET /api/reliability` | On-time / early / late shares at timepoints, by route with each route's worst hour, or by hour for one route (`?route=BCT22&days=7`), from the service log |
 | `GET /api/radar` | Time and tile URL of the latest NEXRAD radar composite |
-| `GET /api/weather-alerts` | Active National Weather Service alerts for Broward, most severe first (cached 2 minutes) |
-| `GET /api/storms` | Active Atlantic storms from the National Hurricane Center: forecast cones, tracks and points as GeoJSON, and whether Broward is in each cone (`?basin=all` for every basin; cached 10 minutes) |
 | `GET /api/health` | `ok`, `degraded` or `down` (HTTP 503), with the checks behind it: feed freshness, timetable end date, timetable age |
 
 The timetable is static JSON under `data/<build>/`, from `build:static`.

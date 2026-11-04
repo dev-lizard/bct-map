@@ -29,7 +29,7 @@
 //     many a bus made (a partial trip skipped some), and for each trip not run, how long riders
 //     waited for the next bus that did run.
 import { addDays, serviceDayStart, servicesOn, ymdInZone } from '../web/gtfs-util.js';
-import { isEarly, isLate, VERY_LATE_S } from './ontime.mjs';
+import { addDelayTo, isEarly, isLate, ONTIME_FIELDS, summarize, VERY_LATE_S } from './ontime.mjs';
 import { dateRange } from './range.mjs';
 import { PERIODS } from './segments.mjs';
 
@@ -84,6 +84,7 @@ function newDay() {
     ontime: {}, delayStop: {}, transfers: {}, feed: Object.fromEntries(FEED_KEYS.map(k => [k, 0])), feedRoute: {},
     anyStop: {}, arrival: {},
     ontimeTrip: {}, // trip id -> [timepoint departures, early, late]
+    ontimeHour: {}, // "route|hour" -> ONTIME_FIELDS counts, by service date: the On time tab
     feedVehicle: {}, // vehicle id -> [GPS reports, stale, gaps, vanished mid-trip]
     transferSlack: {}, // hub id -> "from>to" -> { minutes between arrival and departure (-15..15): connections }
   };
@@ -158,7 +159,8 @@ export class ServiceLog {
   }
 
   // vehicles: decoded vehicle feed (or null if it failed). liveTrips: summarizeTripUpdates() trips.
-  // passages: stops buses were seen to pass (SegmentLog onPass). nowS: this batch's time.
+  // passages: stops buses were seen to pass (SegmentLog onPass). nowS: this batch's time. Returns how
+  // many timepoint departures it timed.
   // feedTs: when the trip-updates feed was published, which is when its predictions were made.
   observe({ vehicles = null, liveTrips = [], passages = [], trips, feedTs = null, nowS = Date.now() / 1000 }) {
     // After a gap in recording (or on the first call, with nothing to go by), trips left over from
@@ -239,6 +241,7 @@ export class ServiceLog {
       }
     }
 
+    let departures = 0;
     for (const p of passages) {
       const trip = trips[p.tripId];
       if (!trip) continue;
@@ -294,8 +297,13 @@ export class ServiceLog {
       const delay = time - (dayStart + row[2]);
       if (Math.abs(delay) <= MAX_PLAUSIBLE_DELAY_S) {
         const day = this.#day(calendarDate);
-        add((day.ontime[trip.r] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0, delay]);
-        add((day.ontimeTrip[p.tripId] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0]);
+        // On time counts departures: a trip's last stop is an arrival (BCT's rule).
+        if (!lastStop) {
+          add((day.ontime[trip.r] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0, delay]);
+          add((day.ontimeTrip[p.tripId] ??= []), [1, isEarly(delay) ? 1 : 0, isLate(delay) ? 1 : 0]);
+          addDelayTo((this.#day(serviceDate).ontimeHour[`${trip.r}|${hour}`] ??= []), delay);
+          departures++;
+        }
         const firstSecs = trip.s.find(r => r[2] != null)[2];
         add((day.delayStop[`${trip.r}|${trip.d}|${row[1]}`] ??= []), [1, delay, row[2] - firstSecs]);
       }
@@ -348,6 +356,7 @@ export class ServiceLog {
       this.#day(state.date).runtime[tripId] = [state.last[1] - state.first[1], scheduled, state.routeId, startDelay];
     }
     this.#settlePending(nowS);
+    return departures;
   }
 
   // Predictions whose bus never showed: a miss if BCT canceled the trip and GPS never saw a bus on
@@ -509,6 +518,27 @@ export class ServiceLog {
       feed: { byDate: dates.map(date => ({ date, ...(this.#days.get(date)?.feed ?? {}) })), byRoute: this.#sum(dates, 'feedRoute') },
       daily: this.#daily(dates, delivered.byDate),
     };
+  }
+
+  // On-time stats for the On time tab (server/ontime.mjs summarize): the last `days` service days, or
+  // from..to; for all routes with each route's worst hour, or for one route by hour.
+  ontime({ days = 7, from = null, to = null, routeId = null, collectingSince = null, nowS = Date.now() / 1000 } = {}) {
+    const range = dateRange({ days, from, to, timezone: this.timezone, nowS });
+    const counts = [];
+    for (const date of range.dates) {
+      for (const [key, values] of Object.entries(this.#days.get(date)?.ontimeHour ?? {})) {
+        const [route, hour] = key.split('|');
+        counts.push({ date, routeId: route, hour: Number(hour), ...Object.fromEntries(ONTIME_FIELDS.map((k, i) => [k, values[i] ?? 0])) });
+      }
+    }
+    return summarize(counts, { days: range.days, routeId, collectingSince });
+  }
+
+  // A day's on-time counts kept before this log recorded them ("route|hour" -> counts), moved in
+  // once; a day that already has its own is left alone.
+  adoptOntime(date, byRouteHour) {
+    const day = this.#day(date);
+    if (!Object.keys(day.ontimeHour).length) day.ontimeHour = byRouteHour;
   }
 
   // Adds up one keyed field (key -> [numbers]) across the dates.

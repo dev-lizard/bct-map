@@ -71,18 +71,3 @@ export function mergeFeeds(...parts) {
   }
   return out;
 }
-
-// The older vehicle feeds to send with `current`: the previous bundle's history plus its current
-// feed, each published before `current`, at most HISTORY_MAX_AGE_S older, oldest first.
-// previous: { vehiclePositions: Uint8Array or null, history: [Uint8Array] } (raw bundle parts).
-export function rollHistory(previous, current) {
-  const now = feedTimestamp(current);
-  if (now == null || !previous) return [];
-  const byTs = new Map();
-  for (const bytes of [...(previous.history ?? []), previous.vehiclePositions]) {
-    if (!bytes) continue;
-    const ts = feedTimestamp(bytes);
-    if (ts != null && ts < now && ts >= now - HISTORY_MAX_AGE_S) byTs.set(ts, bytes);
-  }
-  return [...byTs].sort((a, b) => a[0] - b[0]).slice(-HISTORY_SIZE).map(([, bytes]) => bytes);
-}

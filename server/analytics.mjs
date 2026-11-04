@@ -1,11 +1,10 @@
 // Service analytics, shared by the Node server (analytics-log.mjs) and the Worker's Durable Object
-// (worker/recorder.js): bus bunching and schedule adherence by weather. (Canceled trips are
-// followed in cancellations.mjs.)
+// (worker/recorder.js): bus bunching, and rain hours by date for the by-day charts. (Canceled trips
+// are followed in cancellations.mjs.)
 //
 // Bunching (the rule is in web/bunching.js, shared with the browser): each pair of buses is one event
 // per service day, recorded when first seen.
-import { addDays, ymdInZone } from '../web/gtfs-util.js';
-import { addDelay, emptyCount, mergeCount, ON_TIME_EARLY_S, ON_TIME_LATE_S } from './ontime.mjs';
+import { addDays } from '../web/gtfs-util.js';
 import { dateRange } from './range.mjs';
 import { BUNCHED_MAX_S, BUNCHED_SHARE, MIN_SCHEDULED_GAP_S } from '../web/bunching.js';
 
@@ -50,12 +49,6 @@ export function summarizeBunching(events, { days, from = null, to = null, timezo
 
 // ---- Weather -----------------------------------------------------------------------------------
 
-export const WEATHER_CLASSES = [
-  { wx: 'dry', label: 'Dry' },
-  { wx: 'rain', label: 'Rain' },
-  { wx: 'heavy', label: 'Heavy rain or storms' },
-];
-
 // An hour's rain (inches, the wettest station's) -> 'dry', 'rain' or 'heavy'. A trace counts as dry.
 export function classifyRain(inches) {
   if (inches >= 0.1) return 'heavy'; // 2.5 mm
@@ -86,77 +79,13 @@ export function weatherByHour(csv) {
   return new Map([...wettest].map(([key, inches]) => [key, classifyRain(inches)]));
 }
 
-// counts: [{ date (calendar, YYYYMMDD), hour, n, early, late, sumDelay }] of timepoint departures.
-// Each weather class gets its on-time stats, and the difference from dry weather at the same hours
-// of the day (weighted by that class's departures), so a rainy rush hour is compared with a dry one.
-// byDate: each date's rainy and heavy-rain hours, for the days the counts cover.
-export function weatherImpact(counts, weather) {
-  const byClass = new Map(WEATHER_CLASSES.map(c => [c.wx, { total: emptyCount(), hours: new Set(), byHour: new Map() }]));
-  let unmatched = 0;
-  for (const c of counts) {
-    const wx = weather.get(`${c.date}|${c.hour}`);
-    if (!wx) {
-      unmatched += c.n;
-      continue;
-    }
-    const cls = byClass.get(wx);
-    merge(cls.total, c);
-    cls.hours.add(`${c.date}|${c.hour}`);
-    if (!cls.byHour.has(c.hour)) cls.byHour.set(c.hour, emptyCount());
-    merge(cls.byHour.get(c.hour), c);
-  }
-  const dry = byClass.get('dry');
-  const byDate = Object.fromEntries([...new Set(counts.map(c => c.date))].map(date => [date, [0, 0]]));
+// Each date from..to (YYYYMMDD) -> [rainy hours, heavy-rain hours], from weatherByHour's classes.
+export function rainByDate(from, to, weather) {
+  const byDate = {};
+  for (let d = from; d <= to; d = addDays(d, 1)) byDate[d] = [0, 0];
   for (const [key, wx] of weather) {
     const wet = byDate[key.slice(0, 8)];
     if (wet && wx !== 'dry') wet[wx === 'heavy' ? 1 : 0]++;
   }
-  return {
-    onTimeWindow: { earlyS: ON_TIME_EARLY_S, lateS: ON_TIME_LATE_S },
-    unmatchedSamples: unmatched,
-    byDate, // date -> [rain hours, heavy-rain hours]
-    classes: WEATHER_CLASSES.map(({ wx, label }) => {
-      const cls = byClass.get(wx);
-      return { wx, label, hours: cls.hours.size, ...rates(cls.total), vsDry: wx === 'dry' ? null : versusDry(cls.byHour, dry.byHour) };
-    }),
-  };
-}
-
-const merge = mergeCount;
-
-function rates({ n, early, late, sumDelay }) {
-  if (!n) return { samples: 0, onTimePct: null, earlyPct: null, latePct: null, meanDelayS: null };
-  const pct = k => Math.round((1000 * k) / n) / 10;
-  return { samples: n, onTimePct: pct(n - early - late), earlyPct: pct(early), latePct: pct(late), meanDelayS: Math.round(sumDelay / n) };
-}
-
-// Hours of the day with too few dry departures to compare against are skipped.
-const MIN_DRY_SAMPLES = 20;
-function versusDry(byHour, dryByHour) {
-  let weight = 0;
-  let onTime = 0;
-  let delay = 0;
-  for (const [hour, c] of byHour) {
-    const d = dryByHour.get(hour);
-    if (!d || d.n < MIN_DRY_SAMPLES || !c.n) continue;
-    const r = rates(c);
-    const dr = rates(d);
-    weight += c.n;
-    onTime += c.n * (r.onTimePct - dr.onTimePct);
-    delay += c.n * (r.meanDelayS - dr.meanDelayS);
-  }
-  if (!weight) return null;
-  return { onTimePts: Math.round((10 * onTime) / weight) / 10, meanDelayS: Math.round(delay / weight), samples: weight };
-}
-
-// Reliability samples ([unix time, route, delay, hour]) -> hourly counts by calendar date.
-export function hourCountsFromSamples(samples, timezone) {
-  const counts = new Map();
-  for (const [ts, , delay, hour] of samples) {
-    const date = ymdInZone(new Date(ts * 1000), timezone);
-    const key = `${date}|${hour}`;
-    if (!counts.has(key)) counts.set(key, { date, hour, ...emptyCount() });
-    addDelay(counts.get(key), delay);
-  }
-  return [...counts.values()];
+  return byDate;
 }

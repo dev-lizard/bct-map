@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runningTimeByWeather, SegmentLog } from '../server/segments.mjs';
-import { WEATHER_CLASSES } from '../server/analytics.mjs';
+import { SegmentLog } from '../server/segments.mjs';
 import { serviceDayStart } from '../web/gtfs-util.js';
 
 const TZ = 'America/New_York';
@@ -54,20 +53,6 @@ test('a day round-trips through its saved form; old days are pruned', () => {
   assert.deepEqual(copy.query({ days: 1, nowS: t0 }), log.query({ days: 1, nowS: t0 }));
   assert.deepEqual(copy.prune('20261024'), ['20261023']);
   assert.equal(copy.query({ days: 1, nowS: t0 }).segments.length, 0);
-});
-
-test('running time by weather compares wet hours with dry ones at the same hour', () => {
-  const rows = [
-    { date: '20261020', hour: 17, n: 100, run: 6000, sched: 6000 }, // dry 5 PM: index 1.0
-    { date: '20261021', hour: 17, n: 40, run: 2880, sched: 2400 }, // rainy 5 PM: 1.2
-    { date: '20261021', hour: 8, n: 10, run: 600, sched: 600 }, // rainy 8 AM, but no dry 8 AM to compare
-  ];
-  const weather = new Map([['20261020|17', 'dry'], ['20261021|17', 'rain'], ['20261021|8', 'rain']]);
-  const [dry, rain, heavy] = runningTimeByWeather(rows, weather, WEATHER_CLASSES);
-  assert.deepEqual([dry.index, dry.runs, rain.runs, rain.hours], [1, 100, 50, 2]);
-  assert.equal(rain.index, 1.16); // (2880 + 600) / (2400 + 600)
-  assert.deepEqual(rain.vsDry, { indexPts: 20, runs: 40 });
-  assert.equal(heavy.index, null);
 });
 
 test('a report beyond the last stop doesn\'t time the final segment', () => {

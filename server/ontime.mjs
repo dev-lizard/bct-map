@@ -1,5 +1,5 @@
-// On-time performance rules, shared by the Node server's log (reliability.mjs) and the Worker's
-// Durable Object (worker/recorder.js). Departure-based, the way BCT reports it: at each timepoint
+// On-time performance rules and summaries, for the service log (service.mjs), which records the
+// departures for the Node server and the Worker alike. Departure-based, the way BCT reports it: at each timepoint
 // a bus leaves, how early or late it left against the timetable. 1 minute or more early is early,
 // 5 minutes or more late is late, anything in between is on time. Departures more than 10 minutes
 // late are also counted, so very late buses don't hide inside "late".
@@ -8,53 +8,11 @@
 // (server/segments.mjs). A trip's last stop has no departure, so it isn't counted. BCT's trip updates
 // aren't used: for stops a bus has passed they mostly give the timetable shifted by the current
 // delay, not an observed time.
-import { addDays, serviceDayStart, ymdInZone } from '../web/gtfs-util.js';
-
 export const ON_TIME_EARLY_S = -60; // this early or more: early
 export const ON_TIME_LATE_S = 300; // this late or more: late
 export const VERY_LATE_S = 600; // later than this: very late
 export const isEarly = delay => delay <= ON_TIME_EARLY_S;
 export const isLate = delay => delay >= ON_TIME_LATE_S;
-// A "delay" this large means a mismatched trip or date, not a real departure.
-const MAX_PLAUSIBLE_DELAY_S = 3 * 3600;
-
-// Yields { date, tripId, seq, routeId, time, delay, hour } for each timepoint departure not in
-// seen(date) yet, and adds it there.
-// passages: [{ tripId, seq, time, startDate }] from SegmentLog.observe's onPass.
-// trips: the timetable's trips (trip_id -> { r, s: [[stop_sequence, stop_id, seconds, 1 if timepoint]] }).
-// seen(date): a Set of "trip_id|stop_sequence" already recorded for that service date.
-export function* timepointDepartures(passages, trips, { timezone, seen }) {
-  const hourFormat = hourFormatFor(timezone);
-  for (const p of passages) {
-    const trip = trips[p.tripId];
-    const row = trip?.s.find(r => r[0] === p.seq);
-    if (!row || row[3] !== 1 || row[2] == null || row === trip.s.at(-1)) continue;
-    const date = p.startDate || serviceDateFor(p.time, row[2], timezone);
-    const recorded = seen(date);
-    const key = `${p.tripId}|${p.seq}`;
-    if (recorded.has(key)) continue;
-    recorded.add(key);
-    const time = Math.round(p.time);
-    const delay = time - (serviceDayStart(date, timezone) + row[2]);
-    if (Math.abs(delay) > MAX_PLAUSIBLE_DELAY_S) continue;
-    yield { date, tripId: p.tripId, seq: p.seq, routeId: trip.r, time, delay, hour: Number(hourFormat.format(time * 1000)) };
-  }
-}
-
-// The service date (today's or, for trips past midnight, yesterday's) whose timetable puts `secs`
-// nearest to unix time `time`, when the feed doesn't say.
-function serviceDateFor(time, secs, timezone) {
-  const today = ymdInZone(new Date(time * 1000), timezone);
-  const yesterday = addDays(today, -1);
-  const off = date => Math.abs(time - (serviceDayStart(date, timezone) + secs));
-  return off(yesterday) < off(today) ? yesterday : today;
-}
-
-const hourFormats = new Map();
-function hourFormatFor(timezone) {
-  if (!hourFormats.has(timezone)) hourFormats.set(timezone, new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', hourCycle: 'h23' }));
-  return hourFormats.get(timezone);
-}
 
 // Adds one departure's delay to a running count: { n, early, late, sumDelay, veryLate, sumLate }
 // (sumLate: the delays of the late ones, for their average).
@@ -68,6 +26,14 @@ export function addDelay(count, delay) {
   if (delay > VERY_LATE_S) count.veryLate = (count.veryLate ?? 0) + 1;
   count.sumDelay += delay;
   return count;
+}
+
+// The same counts as an array, the way each day stores them by route and hour.
+export const ONTIME_FIELDS = ['n', 'early', 'late', 'sumDelay', 'veryLate', 'sumLate'];
+export function addDelayTo(counts, delay) {
+  const c = addDelay(emptyCount(), delay);
+  ONTIME_FIELDS.forEach((k, i) => { counts[i] = (counts[i] ?? 0) + c[k]; });
+  return counts;
 }
 
 export const emptyCount = () => ({ n: 0, early: 0, late: 0, sumDelay: 0, veryLate: 0, sumLate: 0 });

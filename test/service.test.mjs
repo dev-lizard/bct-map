@@ -91,7 +91,7 @@ test('schedule fit: running time from first to last timepoint seen, once the tri
   assert.deepEqual(s.runtime.byTrip, { T1: ['R1', 1, 720, 600, 1, 1, 60, 0] }); // 12 min against 10: over by 10%+; left 1 min late
   // The morning-peak band for R1 northbound: one run at 1.2× the timetable, of a 10-minute trip.
   assert.deepEqual(s.runtimeBands, { 'R1|0|1': [1, 1.2, 1.2, 600, 1] });
-  assert.deepEqual(s.ontimeByTrip, { T1: [1, 2, 0, 0] }); // one day, two timepoints, both on time
+  assert.deepEqual(s.ontimeByTrip, { T1: [1, 1, 0, 0] }); // one day: A on time (C, the last stop, is an arrival)
 });
 
 test('a trip stays open between timepoints far apart, while its bus passes stops or reports GPS', () => {
@@ -127,7 +127,7 @@ test('schedule fit also keeps the start delay; on-time and delay by timepoint fe
   const s = log.summary({ days: 1, schedule, nowS: day + 12 * H });
   assert.deepEqual(s.runtime.byTrip.T1, ['R1', 1, 660, 600, 0, 1, 180, 1]); // a late start, 1 min lost on the way
   assert.deepEqual(s.delays, { 'R1|0|A': [1, 180, 0], 'R1|0|C': [1, 240, 600] });
-  assert.deepEqual(s.daily[0].ontime.R1, [2, 0, 0, 420]); // both within 5 min late: on time
+  assert.deepEqual(s.daily[0].ontime.R1, [1, 0, 0, 180]); // A, 3 min late: on time (C is the last stop: an arrival)
 });
 
 test('transfers: a timetabled connection at a hub, made or missed by the real times', () => {
@@ -215,4 +215,39 @@ test('riders: extra wait after a trip not run, early at any stop, and on time at
   assert.equal(s.delivered.missed[0].extraWaitS, 600);
   assert.deepEqual(s.anyStop.R1, [1, 1]); // one departure timed (B), early
   assert.deepEqual(s.arrival.R1, [1, 1, 0, 360]); // one arrival, late, not very late, +6 min
+});
+
+// ---- On time (the On time tab) ---------------------------------------------------------------
+
+// Timepoints A, C and E on R1; R2 starts later. The last stop of each is an arrival, not counted.
+const otTrips = {
+  O1: { r: 'R1', d: 0, sv: 'WK', s: [[1, 'A', 8 * H, 1], [2, 'B', 8 * H + 300], [3, 'C', 8 * H + 600, 1], [4, 'D', 8 * H + 900], [5, 'E', 8 * H + 1200, 1]] },
+  O2: { r: 'R2', d: 0, sv: 'WK', s: [[1, 'A', 9 * H, 1], [2, 'C', 9 * H + 600, 1], [3, 'E', 9 * H + 900, 1]] },
+};
+
+test('on time: timepoint departures by BCT\'s rule, by route and by hour; the last stop is an arrival', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  log.observe({ trips: otTrips, nowS: day + 8 * H, passages: [
+    pass('O1', 1, day + 8 * H - 60), // 1 min early: early
+    pass('O1', 2, day + 8 * H + 400), // an ordinary stop: not counted
+    pass('O1', 3, day + 8 * H + 600 + 300), // 5 min late: late
+    pass('O1', 5, day + 8 * H + 1200 + 900), // the last stop: an arrival
+    pass('O2', 1, day + 9 * H + 299), // just under 5 min late: on time
+    pass('O2', 2, day + 9 * H + 600 + 700), // more than 10 min late
+  ] });
+  const all = log.ontime({ days: 1, nowS: day + 12 * H });
+  assert.deepEqual([all.samples, all.earlyPct, all.onTimePct, all.latePct, all.veryLatePct], [4, 25, 25, 50, 25]);
+  assert.deepEqual(all.routes.map(r => [r.routeId, r.samples, r.onTimePct]), [['R2', 2, 50], ['R1', 2, 0]]);
+  assert.deepEqual(all.byHour.map(h => [h.hour, h.samples]), [[7, 1], [8, 1], [9, 2]]);
+  const r1 = log.ontime({ days: 1, routeId: 'R1', nowS: day + 12 * H });
+  assert.equal(r1.meanDelayS, 120); // (-60 + 300) / 2
+  assert.equal(log.ontime({ days: 7, nowS: day + 9 * 86400 }).samples, 0); // outside the window
+});
+
+test('on time: counts kept elsewhere before move in once, without overwriting a day\'s own', () => {
+  const log = new ServiceLog({ timezone: TZ });
+  log.adoptOntime('20261022', { 'R1|8': [10, 1, 2, 600, 1, 900] });
+  log.adoptOntime('20261022', { 'R1|8': [99, 0, 0, 0, 0, 0] }); // already has its own
+  const s = log.ontime({ days: 1, nowS: day + 12 * H });
+  assert.deepEqual([s.samples, s.earlyPct, s.latePct, s.meanLateS], [10, 10, 20, 450]);
 });

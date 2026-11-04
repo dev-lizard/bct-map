@@ -21,7 +21,7 @@ guide in the same piece of work. That includes:
 - a tab, section, table column, label, colour or legend in `web/analytics.js` or `web/style.css`
   (a new tab needs a new chapter, with an `id` matching its tab key, and a jump-menu link);
 - a rule or threshold behind a number: `server/service.mjs`, `server/ontime.mjs`,
-  `server/analytics.mjs` (bunching, weather), `server/segments.mjs` and `web/speeds.js` (speeds),
+  `server/analytics.mjs` (bunching, rain hours), `server/segments.mjs` and `web/speeds.js` (speeds),
   `server/cancellations.mjs` and `web/canceled.js` (canceled trips);
 - what the Worker records or keeps (`worker/recorder.js`) when a tab's data or limits change.
 
