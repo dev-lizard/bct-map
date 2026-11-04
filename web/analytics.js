@@ -1,23 +1,17 @@
-// The Analytics panel. One period (today, 7 or 30 days, or a range of dates within the last 30) and
-// one route (or all) apply to every tab:
-//   Needs attention  what to act on, from every tab: measures short of their goals, blocks not run,
-//                chronic late or early trips, running times and transfers to change, where gaps
-//                open, congestion by riders, GPS units to check, busy stops without shelter
-//   Service      trips delivered, missed without notice, and canceled (/api/service, /api/analytics)
-//   On time      GPS-timed departures at timepoints, by route or by hour (/api/reliability)
-//   Predictions  how close BCT's predicted arrival was, by how far ahead it was made (/api/service)
-//   Headways     extra waiting on frequent service from buses arriving unevenly (/api/service)
-//   Transfers    how often riders make the timetabled connection at hubs (/api/service)
-//   Schedule     running time against the timetable, late starts, and where along a route delay
-//                builds up (/api/service)
-//   Speeds       bus speeds and congestion between stops, with a map layer (/api/segments)
-//   Bunching     bunching events, each with a replay (/api/analytics)
-//   Weather      on-time and running time in dry, rainy and stormy hours (/api/analytics, /api/segments)
-//   Trends       every measure day by day, by day of the week, and this week against last
-//   Shelters     busy stops without a shelter, from the timetable and the county's stop survey
-//   Feed         the quality of BCT's live feed: stale and missing GPS, buses vanishing mid-trip,
-//                predictions that are only the timetable (/api/service, /api/analytics)
-// Rows open the route, stop or trip they describe; tables sort by any column; every tab exports CSV.
+// The Analytics panel, for BCT staff: what service was delivered, what went wrong, and what to
+// change. One period (today, 7 or 30 days, or a range of dates within the last 30) and one route (or
+// all) apply to every tab. Tabs are grouped by who acts on them:
+//   Needs attention   what to act on, from every tab, and this week against last (everyone)
+//   Service           trips delivered, missed without notice, and canceled (dispatch)
+//   On time           GPS-timed departures at timepoints, by hour, route and day (operations)
+//   Spacing           excess wait on frequent routes, and bunching with replays (dispatch)
+//   Running time      running time against the timetable, where delay builds up, and speeds and
+//                     congestion between stops with a map layer (scheduling, planning)
+//   Connections       timetabled transfers at hubs, made or missed (scheduling)
+//   Rider information how right BCT's predictions were, and the quality of its live feed
+// Data: /api/service and /api/analytics for everything, /api/segments for speeds, /api/reliability
+// for On time. Rows open the route, stop or trip they describe; tables sort by any column; each
+// section exports CSV. Measures with a by-day chart show rain as context.
 import { getApiJson } from './api.js';
 import { addDays } from './gtfs-util.js';
 import { csvTime, downloadCsv } from './csv.js';
@@ -32,9 +26,8 @@ import {
 const PERIODS = [[1, 'Today'], [7, '7 days'], [30, '30 days'], ['custom', 'Custom']];
 const KEPT_DAYS = 30; // how far back the recorder keeps data (server/range.mjs)
 const TABS = [
-  ['attention', 'Needs attention'], ['service', 'Service'], ['ontime', 'On time'], ['predictions', 'Predictions'], ['headways', 'Headways'],
-  ['transfers', 'Transfers'], ['schedule', 'Schedule'], ['speeds', 'Speeds'], ['bunching', 'Bunching'],
-  ['weather', 'Weather'], ['trends', 'Trends'], ['shelters', 'Shelters'], ['feed', 'Feed'],
+  ['attention', 'Needs attention'], ['service', 'Service'], ['ontime', 'On time'], ['spacing', 'Spacing'],
+  ['runtime', 'Running time'], ['connections', 'Connections'], ['info', 'Rider information'],
 ];
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const SHOW = 15;
@@ -44,11 +37,10 @@ const DIRECTIONS = ['outbound', 'inbound'];
 // routes: [{ routeId, routeShortName, ... }] in display order. route(routeId) -> route info.
 // stopName(id); stop(id) -> { lat, lon, name }; tripInfo(tripId, serviceDate) -> { headsign, start, end,
 // stops, routeId, dir, block, startSecs (seconds into the service day) }.
-// stopPairRoutes() -> Map "from>to" -> route ids. shelterStops() -> [{ id, name, city, routes,
-// amenities, buses (a weekday), riders (boardings a weekday, or null) }]. ridership() -> the week of
-// boardings (web/ridership.json) or null. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
+// stopPairRoutes() -> Map "from>to" -> route ids. ridership() -> the week of boardings
+// (web/ridership.json) or null. onStop(id); onTrip(tripId, date); onSpeedMap(GeoJSON or null);
 // onCanceled(record, related); onBunching(event). settings: for the 12/24-hour clock.
-export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopPairRoutes, shelterStops, ridership, onStop, onTrip, onSpeedMap, onCanceled, onBunching, settings }) {
+export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopPairRoutes, ridership, onStop, onTrip, onSpeedMap, onCanceled, onBunching, settings }) {
   let days = 7; // how many days the period covers
   let custom = null; // { from, to } (YYYYMMDD) when the viewer picked dates, else null for the last `days`
   let routeId = null;
@@ -155,13 +147,14 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const since = data?.analytics?.collectingSince;
     note.textContent = since ? `Recorded from BCT's live feed since ${formatTime(since)} ${sameDay(since) ? 'today' : formatDate(new Date(since * 1000))}.` : '';
     if (!data) return;
+    // A tab is one or more sections, one after another.
     const renderers = {
-      attention: renderAttention, service: renderService, ontime: renderOnTime, predictions: renderPredictions, headways: renderHeadways, transfers: renderTransfers,
-      schedule: renderSchedule, speeds: renderSpeeds, bunching: renderBunching, weather: renderWeather, trends: renderTrends, shelters: renderShelters, feed: renderFeed,
+      attention: [renderAttention], service: [renderService], ontime: [renderOnTime, onTimeByDay], spacing: [renderHeadways, renderBunching],
+      runtime: [renderSchedule, renderSpeeds], connections: [renderTransfers], info: [renderPredictions, renderFeed],
     };
-    const parts = renderers[tab]();
-    if (parts) content.replaceChildren(...parts.filter(Boolean));
-    if (tab !== 'speeds' && speedMapOn) {
+    const parts = (renderers[tab] ?? renderers.attention).flatMap(f => f() ?? []);
+    content.replaceChildren(...parts.filter(Boolean));
+    if (tab !== 'runtime' && speedMapOn) {
       speedMapOn = false;
       onSpeedMap(null);
     }
@@ -270,7 +263,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const bands = runtimeAdvice(s.runtimeBands).filter(b => mine(b.routeId));
     section('att-runtime', 'Running times to change', 'Route, direction and time-of-day bands where the timetable should allow what 85% of runs take (the usual rule), and that differs by 2+ minutes and 10%+ of the trip.',
       bands.map(b => item([routeBadge(route(b.routeId)), ` ${DIRECTIONS[b.dir] ?? ''}, ${periodLabel(b.period).toLowerCase()}: `, el('strong', { className: b.changeS > 0 ? 'late' : 'early' }, `${b.changeS > 0 ? 'add' : 'cut'} ${Math.round(Math.abs(b.changeS) / 60)} min`)],
-        `timetable ${Math.round(b.timetabledS / 60)} min; 85% of ${b.runs} runs took up to ${Math.round(b.p85S / 60)}${contractedNote(b.routeId)}`, openTab('schedule', b.routeId))));
+        `timetable ${Math.round(b.timetabledS / 60)} min; 85% of ${b.runs} runs took up to ${Math.round(b.p85S / 60)}${contractedNote(b.routeId)}`, openTab('runtime', b.routeId))));
 
     // 5. Connections worth retiming.
     const hubName = new Map(s.transfers.hubs.map(h => [h.id, h.name]));
@@ -278,13 +271,13 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     section('att-transfers', 'Connections to retime', `Timetabled connections at hubs made by fewer than ${TARGETS.transfers.goal}% of riders, and how many minutes later the second bus would have to leave to reach that (from how long riders really had; counted from Nov 3, 2026). Holding a bus delays the riders on it, so weigh both routes.`,
       retime.map(f => item([`${hubName.get(f.hubId) ?? f.hubId}: `, routeBadge(route(f.from)), ' → ', routeBadge(route(f.to)), ` ${f.madePct}% made`], [el('strong', {}, `leave ${f.shiftMin} min later → ${f.madeAfterPct}%`), ` · ${f.tries} tries`], () => {
         hubId = f.hubId;
-        openTab('transfers')();
+        openTab('connections')();
       })));
 
     // 6. Where gaps between buses open (holding points).
     const holds = holdingPoints(s.headways.byStop, s.delays).filter(h => mine(h.routeId));
     section('att-holds', 'Where gaps open on frequent routes', 'The first timepoint along each frequent route where buses arrive unevenly enough to add a minute or more to riders\' average wait. Holding buses to the timetable at the timepoint before usually evens them out.',
-      holds.map(h => item([routeBadge(route(h.routeId)), ` ${DIRECTIONS[h.dir] ?? ''}: gaps open by ${stopName(h.stopId) ?? h.stopId}`], [el('strong', { className: 'late' }, `${signed(h.excessS)} excess wait`), h.holdAt ? ` · hold at ${stopName(h.holdAt) ?? h.holdAt}` : ' · from the start of the line', ` · ${h.gaps} gaps`], openTab('headways', h.routeId))));
+      holds.map(h => item([routeBadge(route(h.routeId)), ` ${DIRECTIONS[h.dir] ?? ''}: gaps open by ${stopName(h.stopId) ?? h.stopId}`], [el('strong', { className: 'late' }, `${signed(h.excessS)} excess wait`), h.holdAt ? ` · hold at ${stopName(h.holdAt) ?? h.holdAt}` : ' · from the start of the line', ` · ${h.gaps} gaps`], openTab('spacing', h.routeId))));
 
     // 7. Congestion, by rider-minutes.
     if (!data.segments.error) {
@@ -299,21 +292,23 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       const units = gpsUnits(s.feedVehicle, days);
       const why = { stale: 'stale reports', gaps: 'GPS gaps', vanished: 'vanished mid-trip' };
       section('att-gps', 'GPS units to check', 'Buses whose GPS reports are often stale, keep going silent, or vanish mid-trip: a maintenance ticket, and the reason some of the other figures miss trips.',
-        units.map(u => item(`Bus ${u.id}`, [el('strong', {}, u.reasons.map(r => why[r]).join(', ')), ` · ${u.stalePct ?? 0}% stale · ${u.gaps} gaps · vanished ${u.vanished}×`], openTab('feed'))));
+        units.map(u => item(`Bus ${u.id}`, [el('strong', {}, u.reasons.map(r => why[r]).join(', ')), ` · ${u.stalePct ?? 0}% stale · ${u.gaps} gaps · vanished ${u.vanished}×`], openTab('info'))));
     }
-
-    // 9. Busy stops without a shelter.
-    const shelters = shelterStops().filter(x => x.buses > 0 && x.amenities?.surveyed && !x.amenities.have.some(h => h.key === 'shelter') && !/\bterminal\b|transit center/i.test(x.name) && (!routeId || x.routes.includes(routeId)))
-      .sort((x, y) => (y.riders ?? 0) - (x.riders ?? 0) || y.buses - x.buses).filter(x => (x.riders ?? x.buses) >= 100);
-    section('att-shelters', 'Busy stops without a shelter', `Stops with 100+ ${ridership() ? 'riders boarding' : 'buses'} a weekday and no shelter in the county's stop survey.`,
-      shelters.map(x => item(x.name, `${x.riders != null ? `${Math.round(x.riders)} riders` : `${x.buses} buses`} a weekday${x.city ? ` · ${x.city}` : ''}`, () => onStop(x.id))));
 
     const intro = el('p', { className: 'status' }, `What to act on, ${routeText()}, ${periodText()}, drawn from every tab, most important first within each list. Each item opens what it's about.`);
     // Lists built from data recorded only since Nov 3, 2026: say so while they're empty.
     const waiting = [['att-chronic', 'trips late or early again and again (3+ days each)'], ['att-runtime', 'running times to change (10+ runs a band)'], ['att-transfers', 'connections to retime'], ['att-gps', 'GPS units to check']]
       .filter(([id]) => emptyLists.has(id) && (id !== 'att-gps' || !routeId)).map(([, label]) => label);
     const note = waiting.length ? el('p', { className: 'status' }, `Nothing yet in: ${waiting.join('; ')}. Recording for these began on Nov 3, 2026, so they may need a few more days.`) : null;
-    return [head('Needs attention', null), intro, ...(sections.length ? sections : [el('p', { className: 'empty' }, 'Nothing needs attention for this route and period, or not enough has been recorded yet.')]), note];
+    // This week against the last, for 14 days or more.
+    let weeks = [];
+    if (days >= 14) weeks = weekOnWeek(trendRows());
+    else {
+      const b = el('button', { type: 'button', className: 'link' }, custom ? 'Pick 14 days or more to compare a week with the one before' : 'See 30 days to compare this week with last');
+      b.addEventListener('click', () => setDays(30));
+      weeks = [b];
+    }
+    return [head('Needs attention', null), intro, ...weeks, ...(sections.length ? sections : [el('p', { className: 'empty' }, 'Nothing needs attention for this route and period, or not enough has been recorded yet.')]), note];
   }
 
   // Every measure with a goal, for the period and route: { key, label, value, text, range, n, status }.
@@ -390,7 +385,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       ...ridersNotRun(missed),
       t.waitN > 0 && el('div', { className: 'an-kv' }, el('span', {}, 'Extra wait from trips not run'), el('strong', {}, `+${seconds(Math.round(t.waitS / t.waitN))}`), el('span', { className: 'status' }, `on average, ${t.waitN} ${t.waitN === 1 ? 'trip' : 'trips'}; ${t.waitS >= 5400 ? `${Math.round(t.waitS / 360) / 10} hours` : minutesText(t.waitS)} in all`)),
       el('p', { className: 'status' }, `${t.operated.toLocaleString('en-US')} in full · ${t.partial} only partly · ${t.canceled} canceled · ${t.missed} missed without notice${t.unknown ? ` · ${t.unknown.toLocaleString('en-US')} not judged (the recorder wasn't running for their whole trip)` : ''}`),
-      el('p', { className: 'status' }, `A trip ran if a bus was seen on it, in the vehicle feed or by GPS. Only partly: GPS first saw it ${s.rules.partialS / 60}+ minutes into its timetable, or last saw it ${s.rules.partialS / 60}+ minutes before the end; a bus whose GPS failed looks the same (see Feed). Missed without notice: no bus ever showed and BCT never marked it canceled. Only finished trips count.`),
+      el('p', { className: 'status' }, `A trip ran if a bus was seen on it, in the vehicle feed or by GPS. Only partly: GPS first saw it ${s.rules.partialS / 60}+ minutes into its timetable, or last saw it ${s.rules.partialS / 60}+ minutes before the end; a bus whose GPS failed looks the same (see Rider information). Missed without notice: no bus ever showed and BCT never marked it canceled. Only finished trips count.`),
       serviceLegend(),
       judgedDays.length > 0 && el('h4', {}, 'By day'),
       judgedDays.length > 0 && el('div', { className: 'an-rows' }, ...dayRows(judgedDays)),
@@ -655,6 +650,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       el('div', { className: 'rel-legend an-legend' }, ...[['early', 'Bus came early'], ['onTime', 'Accurate'], ['late', 'Bus came late'], ['never', 'Bus never came']].map(([k, label]) => el('span', {}, el('span', { className: `rel-swatch rel-${k}` }), label))),
       el('h4', {}, 'By how far ahead the prediction was made'),
       ...bucketRows,
+      ...dayBars('Accurate by day', trendRows(), r => r.predictions, { n: r => r.predictionsN }),
       !routeId && routeRows.length > 0 && el('h4', {}, 'By route'),
       !routeId && routeRows.length > 0 && table('prediction-routes', [
         { key: 'route', label: 'Route', value: r => route(r.routeId).order ?? 999, render: r => routeBadge(route(r.routeId)) },
@@ -703,8 +699,9 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     const network = excessOf(merge(lines.flatMap(l => Object.values(l.periods))));
     const overall = network == null ? null : el('p', { className: 'an-stat' }, el('strong', {}, signed(network)), ` excess wait (${routeText()}, ${periodText()}) `, goalChip('excessWait', network));
     const holds = holdingPoints(s.headways.byStop, s.delays);
+    const excessDays = dayBars('Excess wait by day', trendRows(), r => r.excess, { fmt: v => signed(v), scale: null });
     if (!routeId) {
-      return [head('Headways', csv), intro, overall, el('h4', {}, 'Excess wait by route and direction (worst first)'),
+      return [head('Headways', csv), intro, overall, ...excessDays, el('h4', {}, 'Excess wait by route and direction (worst first)'),
         table('headway-routes', [
           { key: 'route', label: 'Route', value: l => route(l.routeId).order ?? 999, render: l => el('span', {}, routeBadge(route(l.routeId)), ` ${DIRECTIONS[l.dir] ?? ''}`) },
           { key: 'excess', label: 'Excess wait', num: true, value: l => l.excess ?? -1, render: l => (l.excess == null ? '–' : signed(l.excess)) },
@@ -756,6 +753,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
     ], rows.length);
     if (!rows.length) return [head('Transfers', csv), intro, el('p', { className: 'empty' }, `No connections measured for ${routeText()} ${periodText()} yet. Both buses have to be seen at the hub by GPS.`)];
     const hub = rows.find(h => h.id === hubId);
+    const transferDays = dayBars('Connections made by day', trendRows(), r => r.transfers, { n: r => r.transfersN });
     const parts = [head('Transfers', csv), intro,
       el('p', { className: 'an-stat' }, el('strong', {}, `${Math.round((1000 * all[1]) / all[0]) / 10}%`), plusMinus(all[1], all[0]), ` of ${all[0].toLocaleString('en-US')} timetabled connections were made (${routeText()}, ${periodText()}) `, goalChip('transfers', rate(all[1], all[0]), share(all[1], all[0])))];
     if (!hub) {
@@ -764,7 +762,7 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         { key: 'made', label: 'Made', num: true, value: h => h.made, render: h => `${h.made}%${h.n < FEW ? '*' : ''}` },
         { key: 'extra', label: 'Wait if missed', num: true, value: h => h.extra ?? -1, render: h => (h.extra == null ? '–' : `+${seconds(h.extra)}`) },
         { key: 'n', label: 'Connections', num: true, value: h => h.n },
-      ], rows, { sort: { key: 'made', dir: 1 }, onRow: h => { hubId = h.id; render(); } }));
+      ], rows, { sort: { key: 'made', dir: 1 }, onRow: h => { hubId = h.id; render(); } }), ...transferDays);
       return parts;
     }
     const back = el('button', { type: 'button', className: 'link' }, '← All hubs');
@@ -994,46 +992,21 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       rows.length > 0 && el('h4', {}, 'Events'),
       ...rows,
       moreButton('bunching', events.length),
+      ...dayBars('Bunching by day', trendRows(), r => r.bunching, { fmt: v => String(v), scale: null }),
     ];
   }
 
-  // ---- Weather -----------------------------------------------------------------------------------
+  // ---- By day ------------------------------------------------------------------------------------
 
-  function renderWeather() {
-    const w = data.analytics.weather;
-    if (!w || w.error) return failed('weather', w?.error ?? 'no data');
-    const rt = Array.isArray(data.segments.weather) ? data.segments.weather : [];
-    const rows = w.classes.map(c => {
-      const run = rt.find(x => x.wx === c.wx);
-      return el('div', { className: 'an-weather' },
-        el('div', { className: 'an-weather-name' }, el('strong', {}, c.label), el('span', { className: 'status' }, `${c.hours} h · ${c.samples.toLocaleString('en-US')} departures`)),
-        c.samples ? stackedBar(c) : el('div', { className: 'status' }, 'None yet'),
-        el('div', { className: 'an-weather-numbers' },
-          c.samples ? el('span', {}, `${c.onTimePct}% on time${c.samples < FEW ? '*' : ''}`) : null,
-          c.samples ? el('span', { className: 'status' }, `mean ${signedMinutes(c.meanDelayS)}`) : null,
-          c.vsDry && el('span', { className: c.vsDry.onTimePts < 0 ? 'late' : 'early' }, `${c.vsDry.onTimePts > 0 ? '+' : ''}${c.vsDry.onTimePts} pts on time vs dry`),
-          run?.vsDry && el('span', { className: run.vsDry.indexPts > 0 ? 'late' : 'early' }, `running time ${run.vsDry.indexPts > 0 ? '+' : ''}${run.vsDry.indexPts}% vs dry`)));
-    });
-    return [
-      head('Weather', csvButton(`broward-weather-${slug()}.csv`, () => [
-        ['weather', 'hours', 'departures', 'on_time_pct', 'early_pct', 'late_pct', 'mean_delay_seconds', 'on_time_pts_vs_dry_same_hours', 'running_time_pct_vs_dry_same_hours'],
-        ...w.classes.map(c => [c.label, c.hours, c.samples, c.onTimePct, c.earlyPct, c.latePct, c.meanDelayS, c.vsDry?.onTimePts, rt.find(x => x.wx === c.wx)?.vsDry?.indexPts]),
-      ], 1)),
-      el('p', { className: 'status' }, 'On time at timepoints (from GPS) and running time between stops, by the weather that hour, all routes. "vs dry" compares with dry weather at the same hours of the day.'),
-      legend(), ...rows,
-      el('p', { className: 'status' }, `Rain as measured each hour at Broward's four airport weather stations; an hour is as wet as the wettest. Rain = 0.01 in or more, heavy = 0.10 in or more. Showers miss stations, so treat it as a guide.${w.unmatchedSamples ? ` ${w.unmatchedSamples.toLocaleString('en-US')} departures had no weather record yet.` : ''}`),
-    ];
-  }
-
-  // ---- Trends ------------------------------------------------------------------------------------
-
-  function renderTrends() {
+  // One row per recorded day, every measure, for the by-day charts and week-on-week: on time,
+  // trips in full, predictions, excess wait, transfers, bunching, cancellations, and rain hours.
+  function trendRows() {
     const s = data.service;
-    if (s.error) return failed('trends', s.error);
+    if (s.error) return [];
     const a = data.analytics;
     const wet = a.weather?.byDate ?? {};
     const mine = list => (list ?? []).filter(x => x.routeId === routeId);
-    const rows = s.daily.map(d => {
+    return s.daily.map(d => {
       const ot = routeId ? d.ontime[routeId] : sumArrays(Object.values(d.ontime));
       const pr = routeId ? d.pred[routeId] : sumArrays(Object.values(d.pred));
       const del = d.delivered;
@@ -1055,28 +1028,33 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         heavy: wet[d.date]?.[1] ?? 0,
       };
     }).filter(r => r.departures || r.predictions != null || r.delivered != null || r.bunching || r.canceled);
-    const intro = el('p', { className: 'status' }, `Each measure day by day (${routeText()}). In full (trips that ran the whole way), excess wait and transfers are for all routes together. Rain is hours with rain at any of Broward's airport weather stations.`);
-    const csv = csvButton(`broward-trends-${routeId ? route(routeId).routeShortName : 'all'}-${slug()}.csv`, () => [
-      ['date', 'departures_timed', 'on_time_pct', 'trips_ran_in_full_pct', 'predictions_accurate_pct', 'excess_wait_s', 'transfers_made_pct', 'bunching_events', 'canceled_trips', 'rain_hours', 'heavy_rain_hours'],
-      ...rows.map(r => [r.date, r.departures, r.onTime, r.delivered, r.predictions, r.excess, r.transfers, r.bunching, r.canceled, r.rain, r.heavy]),
-    ], rows.length);
-    if (!rows.length) return [head('Trends', csv), intro, el('p', { className: 'empty' }, 'Nothing recorded yet.')];
-    const parts = [head('Trends', csv), intro];
+  }
 
-    // This week against the week before.
-    if (days >= 14) parts.push(...weekOnWeek(rows));
-    else {
-      const b = el('button', { type: 'button', className: 'link' }, custom ? 'Pick 14 days or more, or see 30 days, to compare a week with the one before' : 'See 30 days to compare this week with last');
-      b.addEventListener('click', () => setDays(30));
-      parts.push(b);
-    }
+  // A measure day by day, one bar each, with ☂ on days with 2+ hours of rain. value(row) -> number or
+  // null. scale: the value of a full bar (null: the largest). n(row): the count behind a share, for *.
+  function dayBars(title, rows, value, { fmt = v => `${v}%`, scale = 100, n = null } = {}) {
+    const shown = rows.filter(r => value(r) != null);
+    if (shown.length < 2) return [];
+    const max = scale ?? Math.max(1, ...shown.map(r => Math.abs(value(r))));
+    return [el('h4', {}, title), el('div', { className: 'an-rows' }, ...shown.map(r => {
+      const v = value(r);
+      const bar = el('span', { className: `an-bar${v < 0 ? ' an-bar-early' : ''}` });
+      bar.style.width = `${Math.min(100, (100 * Math.abs(v)) / max)}%`;
+      const row = el('div', { className: 'an-row an-day' }, el('span', {}, `${dateLabel(r.date)}${r.rain >= 2 ? ' ☂' : ''}`), el('span', { className: 'an-track' }, bar), el('span', { className: 'an-value' }, `${fmt(v)}${n && n(r) < FEW ? '*' : ''}`));
+      row.title = `${dateLabel(r.date)}: ${fmt(v)}${r.rain ? ` · ${r.rain} h of rain${r.heavy ? ` (${r.heavy} heavy)` : ''}` : ' · dry'}`;
+      return row;
+    }))];
+  }
 
-    // The worst days for on-time, with what else happened that day.
+  // On time day by day, the worst days with what else happened, and by day of the week.
+  function onTimeByDay() {
+    const rows = trendRows();
+    const parts = [...dayBars('On time by day', rows, r => r.onTime, { n: r => r.departures })];
     const ranked = rows.filter(r => r.departures >= FEW && r.onTime != null).sort((x, y) => x.onTime - y.onTime);
     if (ranked.length >= 3) {
       const avg = key => rows.reduce((t, r) => t + (r[key] ?? 0), 0) / rows.length;
       const [bunchAvg, cancelAvg] = [avg('bunching'), avg('canceled')];
-      parts.push(el('h4', {}, 'Worst days for on-time'), ...ranked.slice(0, 3).map(r => {
+      parts.push(el('h4', {}, 'Worst days, and what else happened'), ...ranked.slice(0, 3).map(r => {
         const causes = [
           r.rain ? `${r.rain} h of rain${r.heavy ? ` (${r.heavy} heavy)` : ''}` : 'dry',
           `${r.canceled} canceled${r.canceled > cancelAvg * 1.5 && r.canceled >= 3 ? ' (high)' : ''}`,
@@ -1085,33 +1063,20 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
         return el('div', { className: 'an-kv' }, el('span', {}, dateLabel(r.date)), el('strong', { className: 'late' }, `${r.onTime}%`), el('span', { className: 'status' }, causes.join(' · ')));
       }));
     }
-
-    parts.push(el('h4', {}, 'By day'), table('trend-days', [
-      { key: 'date', label: 'Day', value: r => r.date, render: r => dateLabel(r.date) },
-      { key: 'onTime', label: 'On time', num: true, value: r => r.onTime ?? -1, render: r => pctCell(r.onTime, r.departures) },
-      { key: 'delivered', label: 'In full', num: true, value: r => r.delivered ?? -1, render: r => pctCell(r.delivered) },
-      { key: 'predictions', label: 'Predictions', num: true, value: r => r.predictions ?? -1, render: r => pctCell(r.predictions) },
-      { key: 'excess', label: 'Excess wait', num: true, value: r => r.excess ?? -1e9, render: r => (r.excess == null ? '–' : signed(r.excess)) },
-      { key: 'transfers', label: 'Transfers', num: true, value: r => r.transfers ?? -1, render: r => pctCell(r.transfers) },
-      { key: 'bunching', label: 'Bunching', num: true, value: r => r.bunching },
-      { key: 'canceled', label: 'Canceled', num: true, value: r => r.canceled },
-      { key: 'rain', label: 'Rain h', num: true, value: r => r.rain ?? -1, render: r => (r.rain == null ? '–' : String(r.rain)) },
-    ], rows, { sort: { key: 'date', dir: -1 } }));
-
-    // Day of the week, once there's more than a week.
     if (rows.length > 7) {
       const byDay = WEEKDAYS.map((label, i) => ({ label, days: rows.filter(r => weekdayIndex(r.date) === i) }));
-      parts.push(el('h4', {}, 'By day of the week (on time)'), el('div', { className: 'an-rows' }, ...byDay.filter(d => d.days.length).map(d => {
+      parts.push(el('h4', {}, 'By day of the week'), el('div', { className: 'an-rows' }, ...byDay.filter(d => d.days.length).map(d => {
         const n = d.days.reduce((t, r) => t + r.departures, 0);
         const on = d.days.reduce((t, r) => t + ((r.onTime ?? 0) * r.departures) / 100, 0);
         const p = n ? Math.round((1000 * on) / n) / 10 : null;
         const bar = el('span', { className: 'an-bar' });
         bar.style.width = `${p ?? 0}%`;
         const row = el('div', { className: 'an-row' }, el('span', {}, d.label), el('span', { className: 'an-track' }, bar), el('span', { className: 'an-value' }, p == null ? '–' : `${p}%`));
-        row.title = `${d.label}: ${p ?? '–'}% on time over ${d.days.length} ${d.days.length === 1 ? 'day' : 'days'}; ${Math.round((10 * d.days.reduce((t, r) => t + r.bunching, 0)) / d.days.length) / 10} bunching a day`;
+        row.title = `${d.label}: ${p ?? '–'}% on time over ${d.days.length} ${d.days.length === 1 ? 'day' : 'days'}`;
         return row;
       })));
     }
+    if (parts.length) parts.push(el('p', { className: 'status' }, '☂: 2 or more hours of rain that day at Broward\'s airport weather stations.'));
     return parts;
   }
 
@@ -1157,50 +1122,6 @@ export function createAnalytics({ routes, route, stopName, stop, tripInfo, stopP
       const isReal = Math.abs(diff) >= 0.05 && real(key, weight, unit);
       return el('div', { className: 'an-kv' }, el('span', {}, label), el('strong', {}, fmt(now)), el('span', { className: !isReal ? 'status' : good ? 'early' : 'late', title: isReal ? 'More than day-to-day variation explains.' : 'Within normal day-to-day variation: not a real change yet.' }, `${change} (was ${fmt(before)})${isReal ? '' : ' · within normal variation'}`));
     })].filter(Boolean);
-  }
-
-  // ---- Shelters ----------------------------------------------------------------------------------
-
-  function renderShelters() {
-    const all = shelterStops();
-    const rides = ridership();
-    const byRiders = Boolean(rides);
-    const intro = el('p', { className: 'status' }, byRiders
-      ? `Stops with no shelter in Broward County's stop survey, busiest first: by riders boarding there on an average weekday, from BCT's fare boxes (${weekText(rides)}). Rain and heat are much the same county-wide, so they don't change the order.`
-      : 'Stops with no shelter in Broward County\'s stop survey, busiest first, by buses leaving the stop on a weekday. Rain and heat are much the same county-wide, so they don\'t change the order.');
-    if (!all.length) return [head('Shelters', null), intro, el('p', { className: 'empty' }, 'Stop data is still loading.')];
-    if (!all.some(s => s.amenities?.surveyed)) return [head('Shelters', null), intro, el('p', { className: 'empty' }, 'This build has no stop survey data.')];
-    // Terminals and transit centers have their own canopies, which the stop survey doesn't record
-    // as shelters, so their bays are left out.
-    const isTerminal = s => /\bterminal\b|transit center/i.test(s.name);
-    const served = (routeId ? all.filter(s => s.routes.includes(routeId)) : all).filter(s => s.buses > 0);
-    const pool = served.filter(s => !isTerminal(s));
-    const terminals = served.length - pool.length;
-    const surveyed = pool.filter(s => s.amenities?.surveyed);
-    const lacking = surveyed.filter(s => !s.amenities.have.some(x => x.key === 'shelter'));
-    const has = (s, key) => s.amenities.have.some(x => x.key === key);
-    const busy = byRiders ? lacking.filter(s => (s.riders ?? 0) >= 100).length : lacking.filter(s => s.buses >= 100).length;
-    return [
-      head('Shelters', csvButton(`broward-stops-without-shelter-${routeId ? route(routeId).routeShortName : 'all'}.csv`, () => [
-        ['stop_id', 'stop_code', 'stop', 'city', 'riders_a_weekday', 'buses_a_weekday', 'bench', 'lighting', 'routes', 'lat', 'lon'],
-        ...lacking.sort((x, y) => (y.riders ?? 0) - (x.riders ?? 0) || y.buses - x.buses).map(s => [s.id, s.code, s.name, s.city, s.riders ?? '', s.buses, has(s, 'bench') ? 'yes' : 'no', has(s, 'lights') ? 'yes' : 'no', s.routes.map(r => route(r).routeShortName).join(' '), s.lat, s.lon]),
-      ], lacking.length)),
-      intro,
-      el('p', { className: 'an-stat' }, el('strong', {}, lacking.length.toLocaleString('en-US')), ` of ${surveyed.length.toLocaleString('en-US')} surveyed stops have no shelter (${routeText()})`, el('span', { className: 'status' }, ` · ${busy} of them ${byRiders ? 'have 100+ riders boarding' : 'see 100+ buses'} a weekday`)),
-      table('shelters', [
-        { key: 'name', label: 'Stop', value: s => s.name, render: s => el('span', {}, s.name, s.city ? el('span', { className: 'status' }, ` · ${s.city}`) : null) },
-        byRiders && { key: 'riders', label: 'Riders', num: true, value: s => s.riders ?? -1, render: s => (s.riders == null ? '–' : String(Math.round(s.riders))) },
-        { key: 'buses', label: 'Buses', num: true, value: s => s.buses },
-        { key: 'bench', label: 'Bench', value: s => (has(s, 'bench') ? 1 : 0), render: s => (has(s, 'bench') ? 'yes' : el('strong', { className: 'late' }, 'no')) },
-        { key: 'routes', label: 'Routes', value: s => s.routes.length, render: s => el('span', { className: 'badges' }, ...s.routes.slice(0, 3).map(r => routeBadge(route(r))), s.routes.length > 3 ? ` +${s.routes.length - 3}` : '') },
-      ].filter(Boolean), lacking, { sort: { key: byRiders ? 'riders' : 'buses', dir: -1 }, onRow: s => onStop(s.id) }),
-      el('p', { className: 'status' }, [
-        pool.length > surveyed.length && `${(pool.length - surveyed.length).toLocaleString('en-US')} stops aren't in the survey and are left out.`,
-        terminals > 0 && `${terminals} terminal and transit center bays are left out: they're under the station's own canopy.`,
-        byRiders && 'Riders: average weekday boardings.',
-        'Buses: departures on the next weekday\'s timetable.',
-      ].filter(Boolean).join(' ')),
-    ];
   }
 
   // ---- Feed quality ------------------------------------------------------------------------------

@@ -1196,21 +1196,6 @@ button.rel-row:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.an-weather {
-  display: grid;
-  gap: 4px;
-  margin: 10px 0;
-}
-
-.an-weather-name,
-.an-weather-numbers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  font-size: 12px;
-}
-
 .analytics .rel-legend {
   padding: 6px 0;
   border-bottom: 0;
@@ -1730,4 +1715,21 @@ button.an-item:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+/* Analytics: a tab with more than one section; each section after the first starts with a rule. */
+.an-content > .an-head ~ .an-head {
+  margin-top: 18px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+/* A measure day by day: dates need more room than hours. */
+.an-row.an-day {
+  grid-template-columns: 96px minmax(0, 1fr) 56px;
+}
+
+.an-day > span:first-child {
+  font-size: 12px;
+  white-space: nowrap;
 }

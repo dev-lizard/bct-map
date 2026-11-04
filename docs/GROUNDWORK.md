@@ -586,6 +586,13 @@ The aim: numbers that reflect what riders go through, not just what the schedule
 - **Cloudflare:** no new requests; rows read and written unchanged (the new counts ride in each day's existing row, adding roughly 100 KB a day, far under the 2 MB row limit).
 - **Checked:** every tab rendered in the browser against a week of local recording and the rebuilt timetable; lists 3, 4, 5 and 8 fill in over the days after Nov 3, 2026. Week-on-week colouring needs two weeks of recording to see.
 
+**Phase 27 — a tool for BCT staff: seven tabs ✅ (built and checked locally)**
+
+- **Why:** the app had grown a bit of everything (a 3D showpiece, weather extras, 13 Analytics tabs, a shelters planner) without picking who it's for. It's now a tool for BCT staff: what service was delivered, what went wrong, what to change.
+- **Analytics, 13 tabs → 7**, grouped by who acts on them: Needs attention, Service, On time, Spacing (Headways + Bunching), Running time (Schedule fit + Speeds), Connections (Transfers), Rider information (Predictions + Feed). A tab can hold several sections (`renderers` in `web/analytics.js`).
+- **Cut:** the Trends tab (each tab gets its own by-day chart; week-on-week moved to Needs attention; the worst days moved to On time), the Weather tab (rain stays as ☂ on the by-day charts), and the Shelters tab with its Needs attention list and `Schedule.departuresByStop`.
+- **Guide:** chapters regrouped under the seven tabs (ids `spacing`, `runtime`, `connections`, `info`, with `spacing-bunching`, `runtime-speeds` and `info-feed` for their second sections); Weather, Trends and Shelters chapters removed.
+
 - **Side note:** the local server's rebuild failed once on Oct 27 (the log kept only "Node.js v24.21.0"; a rerun succeeded). The production nightly builds on GitHub ran every day.
 
 ---

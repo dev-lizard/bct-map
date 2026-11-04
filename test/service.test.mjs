@@ -173,10 +173,9 @@ test('feed quality: stale reports, GPS gaps, timetable-only predictions, and bus
   assert.deepEqual(log.summary({ days: 1, schedule, nowS: day + 12 * H }).feedVehicle, { bus1: [2, 1, 1, 0] }); // 2 reports, 1 stale, 1 gap
 });
 
-test('schedule: routes and weekday departures by stop', () => {
+test('schedule: routes by stop', () => {
   const sched = toSchedule({ meta: { timezone: TZ }, calendar, exceptions: [], trips });
   assert.deepEqual([...sched.routesByStop().get('B')], ['R1']);
-  assert.deepEqual(Object.fromEntries(sched.departuresByStop(new Set(['WK']))), { A: 3, B: 3 }); // C is where they end
 });
 
 test('service delivered: a trip GPS saw run only part of the way is partial', () => {

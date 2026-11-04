@@ -46,11 +46,11 @@ export const TARGETS = {
   onTime: { label: 'On time', goal: 80, unit: '%', better: 1, tab: 'ontime' },
   delivered: { label: 'Trips ran in full', goal: 99, unit: '%', better: 1, tab: 'service' },
   stopsServed: { label: 'Stops served', goal: 99, unit: '%', better: 1, tab: 'service' },
-  predictions: { label: 'Predictions accurate', goal: 80, unit: '%', better: 1, tab: 'predictions' },
-  transfers: { label: 'Transfers made', goal: 85, unit: '%', better: 1, tab: 'transfers' },
-  excessWait: { label: 'Excess wait', goal: 60, unit: 's', better: -1, tab: 'headways' },
-  staleGps: { label: 'Stale GPS reports', goal: 2, unit: '%', better: -1, tab: 'feed' },
-  timetableOnly: { label: 'Timetable-only predictions', goal: 5, unit: '%', better: -1, tab: 'feed' },
+  predictions: { label: 'Predictions accurate', goal: 80, unit: '%', better: 1, tab: 'info' },
+  transfers: { label: 'Transfers made', goal: 85, unit: '%', better: 1, tab: 'connections' },
+  excessWait: { label: 'Excess wait', goal: 60, unit: 's', better: -1, tab: 'spacing' },
+  staleGps: { label: 'Stale GPS reports', goal: 2, unit: '%', better: -1, tab: 'info' },
+  timetableOnly: { label: 'Timetable-only predictions', goal: 5, unit: '%', better: -1, tab: 'info' },
 };
 
 // 'met', 'close' (short of the goal, but within the ± range, so it may be noise), 'missed' or null

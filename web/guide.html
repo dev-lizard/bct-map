@@ -236,9 +236,6 @@ table.m tr.hl td { background: var(--m-hover); }
 .verdicts { display: grid; gap: 6px; }
 .verdicts div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; font-size: 12px; align-items: baseline; }
 .verdicts b { font-size: 12px; }
-.weather { display: grid; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--m-rule); }
-.weather .top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--m-ink); }
-.weather .nums { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
 .keep { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
 .keep > div { background: var(--card); border: 1px solid var(--rule); border-radius: 12px; padding: 16px; display: grid; gap: 6px; align-content: start; }
 .keep h3 { font-size: 1rem; }
@@ -258,9 +255,9 @@ table.m tr.hl td { background: var(--m-hover); }
     <a class="back" href="./">← Back to the map</a>
     <span class="eyebrow">Broward Transit 3D</span>
     <h1>The Analytics guide</h1>
-    <p class="lede">Every tab of the Analytics panel, explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
+    <p class="lede">Every tab of the Analytics panel, a tool for BCT staff: what service was delivered, what went wrong, and what to change. Each is explained with a picture of it. Each picture is a drawn copy of part of the tab; numbered markers in the picture match the numbered points beside it.</p>
     <p class="muted">The pictures use example numbers, marked as examples. Your own panel shows the real figures. Everything is measured from BCT's live feeds, mostly from the buses' GPS.</p>
-    <span class="updated">Matches the app as of Nov 3, 2026 (Needs attention, goals and ranges)</span>
+    <span class="updated">Matches the app as of Nov 4, 2026 (seven tabs, for BCT staff)</span>
   </header>
 
   <nav class="jump-menu" aria-label="Jump to a tab">
@@ -268,16 +265,10 @@ table.m tr.hl td { background: var(--m-hover); }
     <a href="#attention">Needs attention</a>
     <a href="#service">Service</a>
     <a href="#ontime">On time</a>
-    <a href="#predictions">Predictions</a>
-    <a href="#headways">Headways</a>
-    <a href="#transfers">Transfers</a>
-    <a href="#schedule">Schedule</a>
-    <a href="#speeds">Speeds</a>
-    <a href="#bunching">Bunching</a>
-    <a href="#weather">Weather</a>
-    <a href="#trends">Trends</a>
-    <a href="#shelters">Shelters</a>
-    <a href="#feed">Feed</a>
+    <a href="#spacing">Spacing</a>
+    <a href="#runtime">Running time</a>
+    <a href="#connections">Connections</a>
+    <a href="#info">Rider information</a>
   </nav>
 
   <!-- ===================================================== CONTROLS -->
@@ -294,7 +285,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <div class="with-n"><span class="n">1</span><div class="row-flex" style="flex:1"><div class="seg" style="flex:1;grid-template-columns:repeat(4,1fr)"><span>Today</span><span>7 days</span><span>30 days</span><span class="on">Custom</span></div><span class="m-btn" title="Help">?</span></div><span class="n">5</span></div>
           <div class="with-n"><span class="n">2</span><div class="range-mock"><span class="m-note">First day</span><span class="m-note">Last day</span><span class="select">10/27/2026</span><span class="select">10/28/2026</span></div></div>
           <div class="with-n"><span class="n">3</span><div class="select"><span>All routes</span><span>▾</span></div></div>
-          <div class="with-n"><span class="n">4</span><div class="pills"><span class="on">Needs attention</span><span>Service</span><span>On time</span><span>Predictions</span><span>Headways</span><span>Transfers</span><span>Schedule</span><span>Speeds</span><span>Bunching</span><span>Weather</span><span>Trends</span><span>Shelters</span><span>Feed</span></div></div>
+          <div class="with-n"><span class="n">4</span><div class="pills"><span class="on">Needs attention</span><span>Service</span><span>On time</span><span>Spacing</span><span>Running time</span><span>Connections</span><span>Rider information</span></div></div>
           <div class="m-note">Recorded from BCT's live feed since 2:40 PM Fri, Oct 23.</div>
           <div class="m-head"><h4>Service delivered</h4><span class="with-n" style="flex:none"><span class="m-btn">CSV</span><span class="n">6</span></span></div>
         </div>
@@ -304,7 +295,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">1</span><div><strong>Period.</strong> Today, the last 7 days, the last 30, or <strong>Custom</strong>. Every tab uses it. Longer periods give steadier numbers.</div></li>
           <li><span class="n">2</span><div><strong>Custom dates.</strong> With Custom picked, choose a first and last day, both within the last 30 days (how long recordings are kept). Pick the same day twice for a single day. Every tab reloads for that range, and labels read "from Tue, Oct 27 to Wed, Oct 28".</div></li>
           <li><span class="n">3</span><div><strong>Route.</strong> Show all routes, or narrow every tab to one. Clicking a route badge or a route's row anywhere in the panel sets this too.</div></li>
-          <li><span class="n">4</span><div><strong>Tabs.</strong> One per kind of analysis. Each has its own chapter below.</div></li>
+          <li><span class="n">4</span><div><strong>Tabs.</strong> Seven, grouped by who acts on them: Needs attention for everyone, Service and Spacing for dispatch, On time for operations, Running time and Connections for scheduling, Rider information for customer information and the feed vendor. A tab may hold more than one section (Spacing has excess wait and bunching); each section has its own chapter below.</div></li>
           <li><span class="n">5</span><div><strong>Help (?).</strong> Opens this guide, at the chapter for the tab you're on.</div></li>
           <li><span class="n">6</span><div><strong>CSV.</strong> Downloads that tab's numbers as a spreadsheet file. With Custom dates, the file name says which days.</div></li>
         </ol>
@@ -327,6 +318,9 @@ table.m tr.hl td { background: var(--m-hover); }
         <span class="example">Example numbers</span>
         <div class="mock">
           <div class="m-head"><h4>Needs attention</h4></div>
+          <div class="m-sub">Last 7 days against the 7 before (with 14+ days picked)</div>
+          <div class="kv"><span>On time</span><strong>61.4%</strong><span class="early">+2.1 pts (was 59.3%)</span></div>
+          <div class="kv"><span>Bunching a day</span><strong>9.1</strong><span class="s">−0.4 (was 9.5) · within normal variation</span></div>
           <div class="m-sub"><span class="n sm">1</span>Short of goal (5)</div>
           <div class="kv"><span class="kv-label"><strong>On time</strong> 64.9%</span><span class="late">misses goal ≥ 80%</span><span class="s">10,363 counted</span></div>
           <div class="kv"><span class="kv-label"><strong>Transfers made</strong> 84.5%</span><span class="s">just short of goal (could be noise) ≥ 85%</span><span class="s">10,320 counted</span></div>
@@ -338,7 +332,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <div class="kv"><span class="kv-label"><span class="badge" style="background:#F16477">18</span> outbound, afternoon peak:</span><span class="late">add 6 min</span><span class="s">85% of 48 runs took up to 64</span></div>
           <div class="m-sub"><span class="n sm">5</span>Connections to retime (3)</div>
           <div class="kv"><span class="kv-label">West Terminal: <span class="badge" style="background:#0E7C7B">22</span> → <span class="badge" style="background:#7A5195">81</span> 41% made</span><strong>leave 3 min later → 86%</strong><span class="s">64 tries</span></div>
-          <div class="m-sub"><span class="n sm">6</span>Where gaps open · <span class="n sm">7</span>Congestion · <span class="n sm">8</span>GPS units · <span class="n sm">9</span>Shelters</div>
+          <div class="m-sub"><span class="n sm">6</span>Where gaps open · <span class="n sm">7</span>Congestion · <span class="n sm">8</span>GPS units</div>
         </div>
       </figure>
       <div class="words">
@@ -351,10 +345,10 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">6</span><div><strong>Where gaps open:</strong> on each frequent route, the first timepoint where uneven gaps add a minute or more to riders' wait, and the timepoint before it, where holding buses to the timetable would even them out.</div></li>
           <li><span class="n">7</span><div><strong>Congestion costing riders the most:</strong> stretches where buses lose the most time against their best time of day, times the riders a bus there typically carries: candidates for signal priority or bus lanes.</div></li>
           <li><span class="n">8</span><div><strong>GPS units to check:</strong> buses with 10%+ stale reports, 2+ GPS gaps a day, or vanishing mid-trip twice or more: a maintenance ticket.</div></li>
-          <li><span class="n">9</span><div><strong>Busy stops without a shelter:</strong> 100+ riders boarding a weekday and no shelter in the county's survey.</div></li>
         </ol>
         <p class="callout">Each list shows its top 5, with "Show all" for the rest. Contracted routes (4, 6, 15, 23 and 56) are marked, since their operations go through the contractor.</p>
         <p class="muted">Lists 3, 4, 5 and 8 use data recorded from Nov 3, 2026 and fill in over the following days; until then the tab says which are still empty. Everything here comes from data the panel already loads.</p>
+        <p><strong>This week against last.</strong> With 14 days or more picked, the top of the tab compares the last 7 days with the 7 before (with Custom dates, the range's last 7) for on time, trips ran in full, predictions, transfers, excess wait, bunching and cancellations. A change is coloured, <span class="early">blue</span> better and <span class="late">orange</span> worse, only when it's more than day-to-day variation explains; otherwise it says "within normal variation". Excess wait, which has no count to test, needs a change of 30 seconds or more. With fewer days picked, a link offers 30 days.</p>
       </div>
     </div>
   </section>
@@ -386,7 +380,7 @@ table.m tr.hl td { background: var(--m-hover); }
           <li><span class="n">2</span><div><strong>Every trip falls in one group:</strong>
             <ul class="plain" style="margin-top:8px">
               <li><div><strong>In full:</strong> a bus ran the whole trip.</div></li>
-              <li><div><strong>Only partly:</strong> GPS first saw the bus 15+ minutes into the trip, or last saw it 15+ minutes before the end. A bus whose GPS failed mid-trip looks the same (see the Feed tab).</div></li>
+              <li><div><strong>Only partly:</strong> GPS first saw the bus 15+ minutes into the trip, or last saw it 15+ minutes before the end. A bus whose GPS failed mid-trip looks the same (see Rider information → Feed quality).</div></li>
               <li><div><strong>Canceled:</strong> BCT's feed marked it canceled.</div></li>
               <li><div><strong>Missed without notice:</strong> no bus ever showed up, and BCT never said it was canceled.</div></li>
               <li><div><strong>Not judged:</strong> the recorder wasn't running for the whole trip, so it can't say.</div></li>
@@ -558,84 +552,22 @@ table.m tr.hl td { background: var(--m-hover); }
         </ol>
         <p class="callout">A route with a big yellow slice runs early too often: its timetable may be too loose, or drivers may be leaving early.</p>
         <p>Under the "All" bar, a line gives on time with its ± range and how it stands against the goal (80%, a placeholder). Trips late or early again and again are listed in Needs attention.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================================================== PREDICTIONS -->
-  <section class="chapter" id="predictions">
-    <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Predictions</span></span>
-      <h2>Can riders trust the countdown?</h2>
-      <p>BCT's feed predicts when each bus will reach each stop, and keeps updating that guess as the bus moves. This tab checks those guesses against when GPS saw the bus actually arrive.</p>
-    </div>
-    <div class="pair">
-      <figure class="figure">
-        <div class="mock svgwrap">
-          <svg viewBox="0 0 580 190" role="img" aria-label="Four snapshots of BCT's prediction, taken 25, 15, 6 and 1 minute before arrival, compared with the real arrival at 2:31.">
-            <line x1="30" y1="120" x2="560" y2="120" class="st-muted" stroke-width="2"/>
-            <g font-size="11" class="s-muted" text-anchor="middle"><text x="60" y="140">2:00</text><text x="200" y="140">2:12</text><text x="330" y="140">2:23</text><text x="400" y="140">2:29</text><text x="430" y="140">2:31</text></g>
-            <g>
-              <circle cx="60" cy="120" r="5" class="s-bar"/><circle cx="200" cy="120" r="5" class="s-bar"/><circle cx="330" cy="120" r="5" class="s-bar"/><circle cx="400" cy="120" r="5" class="s-bar"/>
-            </g>
-            <g font-size="11" class="s-ink" text-anchor="middle">
-              <text x="60" y="64">"25 min"</text><text x="60" y="80" class="s-muted">says 2:25</text>
-              <text x="200" y="64">"15 min"</text><text x="200" y="80" class="s-muted">says 2:27</text>
-              <text x="330" y="64">"6 min"</text><text x="330" y="80" class="s-muted">says 2:29</text>
-              <text x="400" y="34">"1 min"</text><text x="400" y="50" class="s-muted">says 2:30</text>
-            </g>
-            <line x1="430" y1="96" x2="430" y2="132" class="st-late" stroke-width="3"/>
-            <text x="440" y="104" class="s-late" font-size="12" font-weight="700">bus really came 2:31</text>
-            <text x="30" y="176" class="s-muted" font-size="11">Each snapshot is graded: 2:25 was 6 min off, 2:27 was 4 off, 2:29 was 2 off, 2:30 was 1 off.</text>
-          </svg>
+        <div class="mock"><span class="example">Example numbers</span>
+          <div class="m-sub">On time by day</div>
+          <div class="srow"><span class="lbl">Thu, Oct 29 ☂</span><span class="sbar"><span class="c-bar" style="flex:52"></span><span style="flex:48"></span></span><span class="pct">52.0%</span></div>
+          <div class="srow"><span class="lbl">Fri, Oct 30</span><span class="sbar"><span class="c-bar" style="flex:63"></span><span style="flex:37"></span></span><span class="pct">63.4%</span></div>
+          <div class="m-sub">Worst days, and what else happened</div>
+          <div class="kv"><span>Thu, Oct 29</span><strong class="late">52.0%</strong><span class="s">6 h of rain (2 heavy) · 41 canceled (high) · 14 bunching</span></div>
         </div>
-      </figure>
-      <div class="words">
-        <p>For each bus and each timepoint ahead of it, the app saves BCT's guess once in each of five windows: <strong>20–30, 10–20, 5–10, 2–5 and 0–2 minutes</strong> before the bus is due, timed from when BCT published the feed. When GPS sees the bus reach the stop (its arrival, since BCT predicts arrivals), each saved guess is graded:</p>
-        <ul class="plain">
-          <li><div><strong>Accurate:</strong> the bus came no more than 1 minute before the guess, or 3 minutes after.</div></li>
-          <li><div><strong>Bus came early:</strong> more than 1 minute before the guess. Riders trusting the countdown miss the bus, so this is the outcome to watch.</div></li>
-          <li><div><strong>Bus came late:</strong> more than 3 minutes after the guess.</div></li>
-          <li><div><strong>Bus never came:</strong> BCT canceled the trip after making the guess, and GPS never saw a bus on it while the app was recording. It counts as a miss. If a bus did run and GPS just lost it, nobody knows, so that guess isn't counted at all.</div></li>
-        </ul>
-        <p>A guess that is exactly the timetable time carries no live information. It's counted separately and not graded, so the score reflects BCT's live predictions only.</p>
-      </div>
-    </div>
-    <div class="pair">
-      <figure class="figure">
-        <span class="example">Example numbers</span>
-        <div class="mock">
-          <div class="m-head"><h4>Prediction accuracy</h4><span class="m-btn">CSV</span></div>
-          <div class="legend"><span><span class="sw c-early"></span>Bus came early</span><span><span class="sw c-ok"></span>Accurate</span><span><span class="sw c-late"></span>Bus came late</span><span><span class="sw c-never"></span>Bus never came</span></div>
-          <div class="m-sub"><span class="n sm">1</span>By how far ahead the prediction was made</div>
-          <div class="srow"><span class="lbl">0–2 min</span><span class="sbar"><span class="c-early" style="flex:4"></span><span class="c-ok" style="flex:91"></span><span class="c-late" style="flex:5"></span></span><span class="pct">91%</span></div>
-          <div class="srow"><span class="lbl">2–5 min</span><span class="sbar"><span class="c-early" style="flex:7"></span><span class="c-ok" style="flex:82"></span><span class="c-late" style="flex:10"></span><span class="c-never" style="flex:1"></span></span><span class="pct">82%</span></div>
-          <div class="srow"><span class="lbl">5–10 min</span><span class="sbar"><span class="c-early" style="flex:11"></span><span class="c-ok" style="flex:66"></span><span class="c-late" style="flex:21"></span><span class="c-never" style="flex:2"></span></span><span class="pct">66%</span></div>
-          <div class="srow"><span class="lbl">10–20 min</span><span class="sbar"><span class="c-early" style="flex:14"></span><span class="c-ok" style="flex:48"></span><span class="c-late" style="flex:36"></span><span class="c-never" style="flex:2"></span></span><span class="pct">48%</span></div>
-          <div class="srow"><span class="lbl">20–30 min</span><span class="sbar"><span class="c-early" style="flex:16"></span><span class="c-ok" style="flex:37"></span><span class="c-late" style="flex:44"></span><span class="c-never" style="flex:3"></span></span><span class="pct">37%</span></div>
-          <div class="m-sub"><span class="n sm">2</span>By route</div>
-          <div class="tablewrap"><table class="m">
-            <thead><tr><th>Route</th><th class="num">Accurate</th><th class="num">5–10 min</th><th class="num">Bus early</th><th class="num">Never came</th><th class="num">Avg miss</th><th class="num">Predictions</th></tr></thead>
-            <tbody><tr><td><span class="badge" style="background:#F16477">18</span></td><td class="num">58%</td><td class="num">61%</td><td class="num">12%</td><td class="num">9</td><td class="num">3.1 min</td><td class="num">1,840</td></tr></tbody>
-          </table></div>
-        </div>
-      </figure>
-      <div class="words">
-        <ol>
-          <li><span class="n">1</span><div><strong>One row per window.</strong> "10–20 min: 48%" means that of the guesses made 10 to 20 minutes ahead, 48% were accurate. Guesses made further ahead are naturally worse; the question is by how much.</div></li>
-          <li><span class="n">2</span><div><strong>By route:</strong> overall accuracy, accuracy 5–10 minutes out (when most riders check), how often the bus came early, how many guesses were for buses that never came, the average miss (over buses that came), and how many guesses were graded.</div></li>
-        </ol>
-        <p>The note above the bars says how many guesses were for buses that never came, and how many were only the timetable and left out. Hovering a row gives its exact shares and average miss.</p>
-        <p class="muted">Only timepoints are graded, since that's where GPS timing is reliable. GPS fixes come about once a minute, so the moment a bus reached the stop is worked out between two fixes. The live Worker checks once a minute, so a short window (like 0–2 minutes) is sometimes skipped for a bus. Days recorded before Nov 3, 2026 were graded the old way: timetable-only guesses were included, buses that never came weren't counted, and some arrivals were timed on departure.</p>
-        <p>A headline above the bars gives accuracy over all distances ahead, with its ± range and against the goal (80%, a placeholder).</p>
+        <p><strong>Day by day</strong> (below the routes): on time for each day, with ☂ on days with 2+ hours of rain at Broward's airport weather stations; the <strong>worst days</strong>, with that day's rain, cancellations and bunching beside them ("(high)" marks a count well above the period's usual, a likely cause); and, past a week, on time <strong>by day of the week</strong>.</p>
       </div>
     </div>
   </section>
 
   <!-- ===================================================== HEADWAYS -->
-  <section class="chapter" id="headways">
+  <section class="chapter" id="spacing">
     <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Headways</span></span>
+      <span class="tabname"><span class="tabpill">Spacing</span></span>
       <h2>On frequent routes, how much longer do riders wait?</h2>
       <p>On routes with a bus every 20 minutes or less, people don't check the timetable; they just turn up and wait for the next bus. Then what matters is how evenly the buses are spaced.</p>
     </div>
@@ -691,81 +623,74 @@ table.m tr.hl td { background: var(--m-hover); }
         </ol>
         <p class="muted">BCT's frequent service is mainly routes 1, 18 and 19, plus some trips on 22, 72 and 114. Other routes won't appear here.</p>
         <p><strong>Excess wait overall</strong> heads the tab, against a goal of 60 seconds or less (a placeholder). For one route, a highlighted line under each direction says <strong>where gaps open</strong> (the first timepoint with a minute or more of excess wait, from 20+ gaps) and the timepoint before it, where holding buses to the timetable would even them out. Timepoints with fewer than 20 gaps are left out of the table as too few to tell; they're still in the CSV.</p>
+        <p>With all routes, <strong>excess wait by day</strong> follows the headline.</p>
       </div>
     </div>
   </section>
 
-  <!-- ===================================================== TRANSFERS -->
-  <section class="chapter" id="transfers">
+  <!-- ===================================================== BUNCHING -->
+  <section class="chapter" id="spacing-bunching">
     <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Transfers</span></span>
-      <h2>Do riders make their connections?</h2>
-      <p>At stations where 3 or more routes meet (41 of them, from Broward Central Terminal down), this tab checks whether a rider coming in on one route would catch the connecting bus the timetable gives them.</p>
+      <span class="tabname"><span class="tabpill">Spacing</span></span>
+      <h2>When buses arrive in pairs</h2>
+      <p>Bunching is two buses on the same route and direction arriving together, when the timetable has them well apart. Riders then face one long gap followed by two buses at once.</p>
     </div>
     <div class="pair">
       <figure class="figure">
         <div class="mock svgwrap">
-          <svg viewBox="0 0 580 210" role="img" aria-label="Route 1 arrives at 8:11; with 2 minutes to walk, route 7 leaving at 8:14 is made. If route 1 arrives at 8:14 and route 7 leaves at 8:15, it's missed and the rider waits 15 more minutes.">
-            <text x="20" y="20" class="s-ink" font-size="13" font-weight="700">Made</text>
-            <line x1="20" y1="50" x2="560" y2="50" class="st-muted" stroke-width="2"/>
-            <circle cx="150" cy="50" r="7" class="s-ink"/><text x="150" y="36" text-anchor="middle" class="s-ink" font-size="11">route 1 arrives 8:11</text>
-            <rect x="150" y="62" width="60" height="10" rx="3" class="s-muted" opacity="0.45"/><text x="180" y="88" text-anchor="middle" class="s-muted" font-size="10">2 min to walk</text>
-            <circle cx="240" cy="50" r="7" class="s-ok"/><text x="250" y="36" class="s-ok" font-size="11" font-weight="700">route 7 leaves 8:14 ✓</text>
-
-            <text x="20" y="122" class="s-ink" font-size="13" font-weight="700">Missed</text>
-            <line x1="20" y1="152" x2="560" y2="152" class="st-muted" stroke-width="2"/>
-            <circle cx="240" cy="152" r="7" class="s-ink"/><text x="240" y="138" text-anchor="middle" class="s-ink" font-size="11">route 1 arrives 8:14</text>
-            <circle cx="270" cy="152" r="7" class="s-late"/><text x="282" y="174" class="s-late" font-size="11" font-weight="700">route 7 left 8:15 ✗</text>
-            <circle cx="540" cy="152" r="7" class="s-ink"/><text x="540" y="138" text-anchor="end" class="s-ink" font-size="11">next one 8:30</text>
-            <path d="M 270 192 H 540" class="st-late" stroke-width="2"/><text x="405" y="206" text-anchor="middle" class="s-late" font-size="11">+15 min extra wait</text>
+          <svg viewBox="0 0 580 150" role="img" aria-label="Timetable has two buses 15 minutes apart; they arrive 2 minutes apart, which counts as bunching.">
+            <text x="20" y="22" class="s-muted" font-size="12">Timetable: 15 minutes apart</text>
+            <line x1="20" y1="44" x2="560" y2="44" class="st-muted" stroke-width="2" stroke-dasharray="4 3"/>
+            <rect x="100" y="34" width="16" height="20" rx="3" class="s-muted"/><rect x="400" y="34" width="16" height="20" rx="3" class="s-muted"/>
+            <text x="20" y="92" class="s-ink" font-size="12" font-weight="700">Really: 2 minutes apart</text>
+            <line x1="20" y1="114" x2="560" y2="114" class="st-ink" stroke-width="2"/>
+            <rect x="370" y="104" width="16" height="20" rx="3" class="s-late"/><rect x="400" y="104" width="16" height="20" rx="3" class="s-late"/>
+            <text x="393" y="144" text-anchor="middle" class="s-late" font-size="11" font-weight="700">bunched</text>
           </svg>
         </div>
       </figure>
       <div class="words">
+        <p>An event is counted when two buses reach the same stop:</p>
         <ul class="plain">
-          <li><div><strong>The connection:</strong> for each bus that arrives at a hub, the next bus on another route that the timetable has leaving 2 to 30 minutes later.</div></li>
-          <li><div><strong>Made:</strong> that bus really left at least 2 minutes after the first one really arrived (time to walk between bays).</div></li>
-          <li><div><strong>Missed:</strong> it left too soon. The rider waits for the next one; the extra wait is how much later that one is timetabled.</div></li>
+          <li><div>within <strong>3 minutes</strong> of each other,</div></li>
+          <li><div>and within a <strong>quarter</strong> of the gap the timetable plans between them,</div></li>
+          <li><div>on trips timetabled at least <strong>10 minutes</strong> apart.</div></li>
         </ul>
-        <p class="muted">Both buses have to be seen at the hub by GPS for a connection to count.</p>
+        <p class="muted">Each pair of buses counts once a day. Times come from BCT's trip updates, and only trips with a bus on them count.</p>
       </div>
     </div>
     <div class="pair">
       <figure class="figure">
         <span class="example">Example numbers</span>
         <div class="mock">
-          <div class="m-head"><h4>Transfers</h4><span class="m-btn">CSV</span></div>
-          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>78.4%</strong> of 2,310 timetabled connections were made</div></div>
-          <div class="m-sub"><span class="n sm">2</span>By hub (worst first; click for its connections)</div>
-          <div class="tablewrap"><table class="m">
-            <thead><tr><th>Hub</th><th class="num">Made</th><th class="num">Wait if missed</th><th class="num">Connections</th></tr></thead>
-            <tbody>
-              <tr class="hl"><td>Broward Central Terminal</td><td class="num">71.2%</td><td class="num">+17 min</td><td class="num">940</td></tr>
-              <tr><td>Lauderhill Transit Center</td><td class="num">82.5%</td><td class="num">+21 min</td><td class="num">312</td></tr>
-            </tbody>
-          </table></div>
-          <div class="m-sub"><span class="n sm">3</span>One hub: pairs of routes</div>
-          <div class="tablewrap"><table class="m">
-            <thead><tr><th>From</th><th>To</th><th class="num">Made</th><th class="num">Wait</th><th class="num">If missed</th><th class="num">Tries</th></tr></thead>
-            <tbody><tr><td><span class="badge" style="background:#E35335">01</span></td><td><span class="badge" style="background:#009DDC">40</span></td><td class="num">54%</td><td class="num">6.5 min</td><td class="num">+20 min</td><td class="num">48</td></tr></tbody>
-          </table></div>
+          <div class="m-head"><h4>Bus bunching</h4><span class="m-btn">CSV</span></div>
+          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>64</strong> bunching events <span class="m-note">· 9.1 a day</span></div></div>
+          <div class="m-sub"><span class="n sm">2</span>By hour of day</div>
+          <div class="hours" aria-hidden="true">
+            <span style="height:0"></span><span style="height:0"></span><span style="height:0"></span><span style="height:0"></span><span style="height:0"></span><span style="height:6%"></span><span style="height:22%"></span><span style="height:48%"></span><span style="height:40%"></span><span style="height:26%"></span><span style="height:20%"></span><span style="height:24%"></span><span style="height:30%"></span><span style="height:34%"></span><span style="height:52%"></span><span style="height:78%"></span><span style="height:100%"></span><span style="height:84%"></span><span style="height:50%"></span><span style="height:28%"></span><span style="height:14%"></span><span style="height:8%"></span><span style="height:4%"></span><span style="height:0"></span>
+          </div>
+          <div class="axis"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span></div>
+          <div class="m-sub"><span class="n sm">3</span>Events</div>
+          <div class="event"><span class="when">5:12 PM</span><span class="badge" style="background:#F16477">18</span><span class="what">US 441/Davie Blvd <span class="m-note">2 min apart, timetabled 15 min</span> <span>· ▶ Replay</span></span></div>
+          <div class="event"><span class="when">8:40 AM</span><span class="badge" style="background:#6C84C2">19</span><span class="what">US 441/Sunrise Blvd <span class="m-note">1 min apart, timetabled 12 min</span> <span class="m-note">· no replay</span></span></div>
         </div>
       </figure>
       <div class="words">
         <ol>
-          <li><span class="n">1</span><div><strong>The headline:</strong> the share of timetabled connections that were made.</div></li>
-          <li><span class="n">2</span><div><strong>By hub</strong>, worst first, with the average extra wait when a connection is missed. Click a hub to open its pairs.</div></li>
-          <li><span class="n">3</span><div><strong>One hub's pairs:</strong> from which route to which, how often it was made, the usual wait between the two buses when made, and the extra wait when missed. Click a route badge to narrow every tab to it. "← All hubs" goes back.</div></li>
+          <li><span class="n">1</span><div><strong>The total</strong> for the period and route, and the daily average. With all routes, a bar chart by route sits under it; click a route to narrow to it.</div></li>
+          <li><span class="n">2</span><div><strong>By hour of day:</strong> one column per hour, so you can see when bunching happens (usually the afternoon rush).</div></li>
+          <li><span class="n">3</span><div><strong>Events:</strong> each one, with where and how close. <strong>▶ Replay</strong> plays both buses on the map as moving "ghost" buses around the moment they bunched, from their recorded GPS tracks. "Recording" means the replay is still being captured.</div></li>
         </ol>
-        <p>The headline carries its ± range and a goal chip (85%, a placeholder). In a hub's table, <strong>To fix</strong> says how many minutes later the second bus would have to leave for 85% of riders to make the connection, and what share would then make it (like "+3 min → 86%"), worked out from how long riders really had (recorded from Nov 3, 2026). Pairs with fewer than 20 tries are left out of the table; they're in the CSV.</p>
+        <p class="callout">On the map, bunching shows as it happens: a red "!" floats between two buses bunched right now (a red badge in 2D). Click it for the route, how close they are against the timetable, at which stop, and buttons to open either bus's trip. It uses the same rule as this tab, worked out from the live feed in your browser.</p>
+        <p><strong>Bunching by day</strong> closes the section (☂: 2+ hours of rain that day).</p>
       </div>
     </div>
   </section>
 
   <!-- ===================================================== SCHEDULE -->
-  <section class="chapter" id="schedule">
+  <section class="chapter" id="runtime">
     <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Schedule</span></span>
+      <span class="tabname"><span class="tabpill">Running time</span></span>
       <h2>Is each route's timetable realistic?</h2>
       <p>It compares how long trips really take, timed by GPS, with how long the timetable says, and splits lateness into leaving late and losing time on the road.</p>
     </div>
@@ -983,9 +908,9 @@ table.m tr.hl td { background: var(--m-hover); }
   </section>
 
   <!-- ===================================================== SPEEDS -->
-  <section class="chapter" id="speeds">
+  <section class="chapter" id="runtime-speeds">
     <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Speeds</span></span>
+      <span class="tabname"><span class="tabpill">Running time</span></span>
       <h2>How fast do buses move, and where does traffic cost time?</h2>
       <p>Every time GPS sees a bus go from one stop to the next, that stretch gets a time. Thousands of those make a speed map of Broward's bus streets, using the buses as traffic sensors.</p>
     </div>
@@ -1016,179 +941,149 @@ table.m tr.hl td { background: var(--m-hover); }
     </div>
   </section>
 
-  <!-- ===================================================== BUNCHING -->
-  <section class="chapter" id="bunching">
+  <!-- ===================================================== TRANSFERS -->
+  <section class="chapter" id="connections">
     <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Bunching</span></span>
-      <h2>When buses arrive in pairs</h2>
-      <p>Bunching is two buses on the same route and direction arriving together, when the timetable has them well apart. Riders then face one long gap followed by two buses at once.</p>
+      <span class="tabname"><span class="tabpill">Connections</span></span>
+      <h2>Do riders make their connections?</h2>
+      <p>At stations where 3 or more routes meet (41 of them, from Broward Central Terminal down), this tab checks whether a rider coming in on one route would catch the connecting bus the timetable gives them.</p>
     </div>
     <div class="pair">
       <figure class="figure">
         <div class="mock svgwrap">
-          <svg viewBox="0 0 580 150" role="img" aria-label="Timetable has two buses 15 minutes apart; they arrive 2 minutes apart, which counts as bunching.">
-            <text x="20" y="22" class="s-muted" font-size="12">Timetable: 15 minutes apart</text>
-            <line x1="20" y1="44" x2="560" y2="44" class="st-muted" stroke-width="2" stroke-dasharray="4 3"/>
-            <rect x="100" y="34" width="16" height="20" rx="3" class="s-muted"/><rect x="400" y="34" width="16" height="20" rx="3" class="s-muted"/>
-            <text x="20" y="92" class="s-ink" font-size="12" font-weight="700">Really: 2 minutes apart</text>
-            <line x1="20" y1="114" x2="560" y2="114" class="st-ink" stroke-width="2"/>
-            <rect x="370" y="104" width="16" height="20" rx="3" class="s-late"/><rect x="400" y="104" width="16" height="20" rx="3" class="s-late"/>
-            <text x="393" y="144" text-anchor="middle" class="s-late" font-size="11" font-weight="700">bunched</text>
+          <svg viewBox="0 0 580 210" role="img" aria-label="Route 1 arrives at 8:11; with 2 minutes to walk, route 7 leaving at 8:14 is made. If route 1 arrives at 8:14 and route 7 leaves at 8:15, it's missed and the rider waits 15 more minutes.">
+            <text x="20" y="20" class="s-ink" font-size="13" font-weight="700">Made</text>
+            <line x1="20" y1="50" x2="560" y2="50" class="st-muted" stroke-width="2"/>
+            <circle cx="150" cy="50" r="7" class="s-ink"/><text x="150" y="36" text-anchor="middle" class="s-ink" font-size="11">route 1 arrives 8:11</text>
+            <rect x="150" y="62" width="60" height="10" rx="3" class="s-muted" opacity="0.45"/><text x="180" y="88" text-anchor="middle" class="s-muted" font-size="10">2 min to walk</text>
+            <circle cx="240" cy="50" r="7" class="s-ok"/><text x="250" y="36" class="s-ok" font-size="11" font-weight="700">route 7 leaves 8:14 ✓</text>
+
+            <text x="20" y="122" class="s-ink" font-size="13" font-weight="700">Missed</text>
+            <line x1="20" y1="152" x2="560" y2="152" class="st-muted" stroke-width="2"/>
+            <circle cx="240" cy="152" r="7" class="s-ink"/><text x="240" y="138" text-anchor="middle" class="s-ink" font-size="11">route 1 arrives 8:14</text>
+            <circle cx="270" cy="152" r="7" class="s-late"/><text x="282" y="174" class="s-late" font-size="11" font-weight="700">route 7 left 8:15 ✗</text>
+            <circle cx="540" cy="152" r="7" class="s-ink"/><text x="540" y="138" text-anchor="end" class="s-ink" font-size="11">next one 8:30</text>
+            <path d="M 270 192 H 540" class="st-late" stroke-width="2"/><text x="405" y="206" text-anchor="middle" class="s-late" font-size="11">+15 min extra wait</text>
           </svg>
         </div>
       </figure>
       <div class="words">
-        <p>An event is counted when two buses reach the same stop:</p>
         <ul class="plain">
-          <li><div>within <strong>3 minutes</strong> of each other,</div></li>
-          <li><div>and within a <strong>quarter</strong> of the gap the timetable plans between them,</div></li>
-          <li><div>on trips timetabled at least <strong>10 minutes</strong> apart.</div></li>
+          <li><div><strong>The connection:</strong> for each bus that arrives at a hub, the next bus on another route that the timetable has leaving 2 to 30 minutes later.</div></li>
+          <li><div><strong>Made:</strong> that bus really left at least 2 minutes after the first one really arrived (time to walk between bays).</div></li>
+          <li><div><strong>Missed:</strong> it left too soon. The rider waits for the next one; the extra wait is how much later that one is timetabled.</div></li>
         </ul>
-        <p class="muted">Each pair of buses counts once a day. Times come from BCT's trip updates, and only trips with a bus on them count.</p>
+        <p class="muted">Both buses have to be seen at the hub by GPS for a connection to count.</p>
       </div>
     </div>
     <div class="pair">
       <figure class="figure">
         <span class="example">Example numbers</span>
         <div class="mock">
-          <div class="m-head"><h4>Bus bunching</h4><span class="m-btn">CSV</span></div>
-          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>64</strong> bunching events <span class="m-note">· 9.1 a day</span></div></div>
-          <div class="m-sub"><span class="n sm">2</span>By hour of day</div>
-          <div class="hours" aria-hidden="true">
-            <span style="height:0"></span><span style="height:0"></span><span style="height:0"></span><span style="height:0"></span><span style="height:0"></span><span style="height:6%"></span><span style="height:22%"></span><span style="height:48%"></span><span style="height:40%"></span><span style="height:26%"></span><span style="height:20%"></span><span style="height:24%"></span><span style="height:30%"></span><span style="height:34%"></span><span style="height:52%"></span><span style="height:78%"></span><span style="height:100%"></span><span style="height:84%"></span><span style="height:50%"></span><span style="height:28%"></span><span style="height:14%"></span><span style="height:8%"></span><span style="height:4%"></span><span style="height:0"></span>
-          </div>
-          <div class="axis"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span></div>
-          <div class="m-sub"><span class="n sm">3</span>Events</div>
-          <div class="event"><span class="when">5:12 PM</span><span class="badge" style="background:#F16477">18</span><span class="what">US 441/Davie Blvd <span class="m-note">2 min apart, timetabled 15 min</span> <span>· ▶ Replay</span></span></div>
-          <div class="event"><span class="when">8:40 AM</span><span class="badge" style="background:#6C84C2">19</span><span class="what">US 441/Sunrise Blvd <span class="m-note">1 min apart, timetabled 12 min</span> <span class="m-note">· no replay</span></span></div>
-        </div>
-      </figure>
-      <div class="words">
-        <ol>
-          <li><span class="n">1</span><div><strong>The total</strong> for the period and route, and the daily average. With all routes, a bar chart by route sits under it; click a route to narrow to it.</div></li>
-          <li><span class="n">2</span><div><strong>By hour of day:</strong> one column per hour, so you can see when bunching happens (usually the afternoon rush).</div></li>
-          <li><span class="n">3</span><div><strong>Events:</strong> each one, with where and how close. <strong>▶ Replay</strong> plays both buses on the map as moving "ghost" buses around the moment they bunched, from their recorded GPS tracks. "Recording" means the replay is still being captured.</div></li>
-        </ol>
-        <p class="callout">On the map, bunching shows as it happens: a red "!" floats between two buses bunched right now (a red badge in 2D). Click it for the route, how close they are against the timetable, at which stop, and buttons to open either bus's trip. It uses the same rule as this tab, worked out from the live feed in your browser.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================================================== WEATHER -->
-  <section class="chapter" id="weather">
-    <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Weather</span></span>
-      <h2>Does rain make buses late?</h2>
-      <p>Each hour is labelled dry, rain, or heavy rain, from Broward's four airport weather stations, and on-time and running times are compared across them.</p>
-    </div>
-    <div class="pair">
-      <figure class="figure">
-        <span class="example">Example numbers</span>
-        <div class="mock">
-          <div class="m-head"><h4>Weather</h4><span class="m-btn">CSV</span></div>
-          <div class="legend"><span><span class="sw c-early"></span>Early</span><span><span class="sw c-ok"></span>On time</span><span><span class="sw c-late"></span>Late</span></div>
-          <div class="weather"><div class="top"><strong>Dry</strong><span class="m-note">142 h · 9,410 departures</span></div><span class="sbar"><span class="c-early" style="flex:17"></span><span class="c-ok" style="flex:62"></span><span class="c-late" style="flex:21"></span></span><div class="nums"><span>62% on time</span><span class="m-note">mean +2.4 min</span></div></div>
-          <div class="weather"><div class="top"><strong>Rain</strong><span class="m-note">14 h · 820 departures</span></div><span class="sbar"><span class="c-early" style="flex:14"></span><span class="c-ok" style="flex:57"></span><span class="c-late" style="flex:29"></span></span><div class="nums"><span>57% on time</span><span class="m-note">mean +3.3 min</span><span class="with-n" style="gap:4px"><span class="late">−4.2 pts on time vs dry</span><span class="n sm">1</span></span><span class="with-n" style="gap:4px"><span class="late">running time +6% vs dry</span><span class="n sm">2</span></span></div></div>
-          <div class="weather" style="border-bottom:0"><div class="top"><strong>Heavy rain or storms</strong><span class="m-note">3 h · 160 departures</span></div><span class="sbar"><span class="c-early" style="flex:10"></span><span class="c-ok" style="flex:49"></span><span class="c-late" style="flex:41"></span></span><div class="nums"><span>49% on time</span><span class="m-note">mean +5.0 min</span><span class="late">−11 pts on time vs dry</span></div></div>
-        </div>
-      </figure>
-      <div class="words">
-        <ul class="plain">
-          <li><div><strong>Rain:</strong> 0.01 inches or more in the hour, at the wettest station. <strong>Heavy:</strong> 0.10 inches or more. A trace counts as dry.</div></li>
-          <li><div>Each row shows the hours of that weather, how many departures, the on-time bar, and the average lateness.</div></li>
-        </ul>
-        <ol>
-          <li><span class="n">1</span><div><strong>"vs dry" on-time:</strong> how many percentage points worse (or better) on-time was in rain, compared with dry weather <em>at the same hours of the day</em>. That's fair: a rainy rush hour is compared with a dry rush hour, not a dry midnight.</div></li>
-          <li><span class="n">2</span><div><strong>"vs dry" running time:</strong> how much longer stop-to-stop runs took in rain, compared in the same way.</div></li>
-        </ol>
-        <p class="muted">Florida showers are often a few miles wide and can miss every station, so treat this as a guide.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================================================== TRENDS -->
-  <section class="chapter" id="trends">
-    <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Trends</span></span>
-      <h2>Is it getting better or worse?</h2>
-      <p>Every measure, day by day, so you can see changes over time and pick out bad days.</p>
-    </div>
-    <div class="pair">
-      <figure class="figure">
-        <span class="example">Example numbers</span>
-        <div class="mock">
-          <div class="m-head"><h4>Trends</h4><span class="m-btn">CSV</span></div>
-          <div class="m-sub"><span class="n sm">1</span>Last 7 days against the 7 before</div>
-          <div class="kv"><span>On time</span><strong>61.4%</strong><span class="early">+2.1 pts (was 59.3%)</span></div>
-          <div class="kv"><span>Trips ran in full</span><strong>94.2%</strong><span class="late">−0.8 pts (was 95.0%)</span></div>
-          <div class="kv"><span>Bunching a day</span><strong>9.1</strong><span class="early">−1.4 (was 10.5)</span></div>
-          <div class="m-sub"><span class="n sm">2</span>Worst days for on-time</div>
-          <div class="kv"><span>Thu, Oct 29</span><strong class="late">52.0%</strong><span class="s">6 h of rain (2 heavy) · 41 canceled (high) · 14 bunching</span></div>
-          <div class="m-sub"><span class="n sm">3</span>By day</div>
+          <div class="m-head"><h4>Transfers</h4><span class="m-btn">CSV</span></div>
+          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>78.4%</strong> of 2,310 timetabled connections were made</div></div>
+          <div class="m-sub"><span class="n sm">2</span>By hub (worst first; click for its connections)</div>
           <div class="tablewrap"><table class="m">
-            <thead><tr><th>Day</th><th class="num">On time</th><th class="num">In full</th><th class="num">Predictions</th><th class="num">Excess wait</th><th class="num">Transfers</th><th class="num">Bunching</th><th class="num">Canceled</th><th class="num">Rain h</th></tr></thead>
+            <thead><tr><th>Hub</th><th class="num">Made</th><th class="num">Wait if missed</th><th class="num">Connections</th></tr></thead>
             <tbody>
-              <tr><td>Thu, Oct 29</td><td class="num">52.0%</td><td class="num">92.1%</td><td class="num">49.3%</td><td class="num">+3.9 min</td><td class="num">71.0%</td><td class="num">14</td><td class="num">41</td><td class="num">6</td></tr>
-              <tr><td>Wed, Oct 28</td><td class="num">63.4%</td><td class="num">94.4%</td><td class="num">55.0%</td><td class="num">+2.2 min</td><td class="num">79.5%</td><td class="num">8</td><td class="num">29</td><td class="num">0</td></tr>
+              <tr class="hl"><td>Broward Central Terminal</td><td class="num">71.2%</td><td class="num">+17 min</td><td class="num">940</td></tr>
+              <tr><td>Lauderhill Transit Center</td><td class="num">82.5%</td><td class="num">+21 min</td><td class="num">312</td></tr>
             </tbody>
           </table></div>
-          <div class="m-sub"><span class="n sm">4</span>By day of the week (on time)</div>
-          <div class="srow"><span class="lbl">Mon</span><span class="sbar"><span class="c-bar" style="flex:63"></span><span style="flex:37"></span></span><span class="pct">63%</span></div>
-          <div class="srow"><span class="lbl">Fri</span><span class="sbar"><span class="c-bar" style="flex:55"></span><span style="flex:45"></span></span><span class="pct">55%</span></div>
-        </div>
-      </figure>
-      <div class="words">
-        <ol>
-          <li><span class="n">1</span><div><strong>Week on week</strong> (when the period covers 14 days or more): the last 7 days against the 7 before (with Custom dates, the range's last 7 days) for on time, trips ran in full, predictions, transfers, excess wait, bunching and cancellations. <span class="early">Blue</span> is better, <span class="late">orange</span> worse, whichever way "better" points for that measure.</div></li>
-          <li><span class="n">2</span><div><strong>Worst days:</strong> the three days with the lowest on-time, with that day's rain, cancellations and bunching beside them. "(high)" marks a count well above the period's usual, a likely cause.</div></li>
-          <li><span class="n">3</span><div><strong>By day:</strong> every measure in one sortable table. Sort by On time to find the worst days, or by Rain h to see the wet ones.</div></li>
-          <li><span class="n">4</span><div><strong>By day of the week</strong> (once there's more than a week): on-time averaged per weekday, so you can see if Fridays are consistently worse.</div></li>
-        </ol>
-        <p class="muted">With one route picked, On time, Predictions, Bunching and Canceled follow that route. In full, Excess wait and Transfers are only kept for all routes together, so they show "–". The week-on-week comparison needs two weeks of recording.</p>
-        <p>In "last 7 days against the 7 before", a change is coloured only when it's more than day-to-day variation explains (from the counts behind each share, or each day's events); otherwise it says "within normal variation". Excess wait, which has no count to test, needs a change of 30 seconds or more.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================================================== SHELTERS -->
-  <section class="chapter" id="shelters">
-    <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Shelters</span></span>
-      <h2>Which busy stops have no shelter?</h2>
-      <p>A planning list: stops with no shelter in Broward County's bus stop survey, busiest first.</p>
-    </div>
-    <div class="pair">
-      <figure class="figure">
-        <span class="example">Example numbers</span>
-        <div class="mock">
-          <div class="m-head"><h4>Shelters</h4><span class="m-btn">CSV</span></div>
-          <div class="with-n"><span class="n">1</span><div class="m-stat"><strong>3,126</strong> of 4,480 surveyed stops have no shelter <span class="m-note">· 8 of them have 100+ riders boarding a weekday</span></div></div>
+          <div class="m-sub"><span class="n sm">3</span>One hub: pairs of routes</div>
           <div class="tablewrap"><table class="m">
-            <thead><tr><th>Stop<span class="n">2</span></th><th class="num">Riders<span class="n">3</span></th><th class="num">Buses<span class="n">4</span></th><th>Bench<span class="n">5</span></th><th>Routes</th></tr></thead>
-            <tbody>
-              <tr><td>Sawgrass Mills <span class="m-note">· Sunrise</span></td><td class="num">547</td><td class="num">124</td><td>yes</td><td><span class="badge" style="background:#BF83B9">22</span> <span class="badge" style="background:#C88A12">36</span> +2</td></tr>
-              <tr class="hl"><td>NW 2nd St/NW 84th Ave <span class="m-note">· Plantation</span></td><td class="num">212</td><td class="num">281</td><td><span class="late">no</span></td><td><span class="badge" style="background:#DDA68A">02</span> <span class="badge" style="background:#876500">12</span> +4</td></tr>
-            </tbody>
+            <thead><tr><th>From</th><th>To</th><th class="num">Made</th><th class="num">Wait</th><th class="num">If missed</th><th class="num">Tries</th></tr></thead>
+            <tbody><tr><td><span class="badge" style="background:#E35335">01</span></td><td><span class="badge" style="background:#009DDC">40</span></td><td class="num">54%</td><td class="num">6.5 min</td><td class="num">+20 min</td><td class="num">48</td></tr></tbody>
           </table></div>
         </div>
       </figure>
       <div class="words">
         <ol>
-          <li><span class="n">1</span><div><strong>The count</strong> of surveyed stops without a shelter, and how many of those are very busy.</div></li>
-          <li><span class="n">2</span><div><strong>Stop</strong> and its city. Click a row to open the stop on the map.</div></li>
-          <li><span class="n">3</span><div><strong>Riders:</strong> how many people board at the stop on an average weekday, from a week of BCT's fare-box data (Oct 18–24, 2026). The list is ranked by this: it's how many people wait there.</div></li>
-          <li><span class="n">4</span><div><strong>Buses:</strong> how many buses leave the stop on a weekday, from the timetable. A stop with few riders but many buses is mostly a pass-through.</div></li>
-          <li><span class="n">5</span><div><strong>Bench:</strong> whether there's at least somewhere to sit. A busy stop with no shelter <em>and</em> no bench is the strongest case.</div></li>
+          <li><span class="n">1</span><div><strong>The headline:</strong> the share of timetabled connections that were made.</div></li>
+          <li><span class="n">2</span><div><strong>By hub</strong>, worst first, with the average extra wait when a connection is missed. Click a hub to open its pairs.</div></li>
+          <li><span class="n">3</span><div><strong>One hub's pairs:</strong> from which route to which, how often it was made, the usual wait between the two buses when made, and the extra wait when missed. Click a route badge to narrow every tab to it. "← All hubs" goes back.</div></li>
         </ol>
-        <p class="muted">Stops the survey doesn't cover are left out (the count is shown below the table). Bays at terminals and transit centers (Broward Central Terminal, West Regional Terminal, Lauderhill and Northeast Transit Centers) are left out too: they're under the station's own canopy, which the survey doesn't record as a shelter. Rain and heat aren't used to rank stops, because the weather is much the same county-wide. The CSV includes each stop's riders, coordinates and lighting.</p>
+        <p>The headline carries its ± range and a goal chip (85%, a placeholder). In a hub's table, <strong>To fix</strong> says how many minutes later the second bus would have to leave for 85% of riders to make the connection, and what share would then make it (like "+3 min → 86%"), worked out from how long riders really had (recorded from Nov 3, 2026). Pairs with fewer than 20 tries are left out of the table; they're in the CSV.</p>
+        <p>With all routes, <strong>connections made by day</strong> closes the section.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== PREDICTIONS -->
+  <section class="chapter" id="info">
+    <div class="chapter-head">
+      <span class="tabname"><span class="tabpill">Rider information</span></span>
+      <h2>Can riders trust the countdown?</h2>
+      <p>BCT's feed predicts when each bus will reach each stop, and keeps updating that guess as the bus moves. This tab checks those guesses against when GPS saw the bus actually arrive.</p>
+    </div>
+    <div class="pair">
+      <figure class="figure">
+        <div class="mock svgwrap">
+          <svg viewBox="0 0 580 190" role="img" aria-label="Four snapshots of BCT's prediction, taken 25, 15, 6 and 1 minute before arrival, compared with the real arrival at 2:31.">
+            <line x1="30" y1="120" x2="560" y2="120" class="st-muted" stroke-width="2"/>
+            <g font-size="11" class="s-muted" text-anchor="middle"><text x="60" y="140">2:00</text><text x="200" y="140">2:12</text><text x="330" y="140">2:23</text><text x="400" y="140">2:29</text><text x="430" y="140">2:31</text></g>
+            <g>
+              <circle cx="60" cy="120" r="5" class="s-bar"/><circle cx="200" cy="120" r="5" class="s-bar"/><circle cx="330" cy="120" r="5" class="s-bar"/><circle cx="400" cy="120" r="5" class="s-bar"/>
+            </g>
+            <g font-size="11" class="s-ink" text-anchor="middle">
+              <text x="60" y="64">"25 min"</text><text x="60" y="80" class="s-muted">says 2:25</text>
+              <text x="200" y="64">"15 min"</text><text x="200" y="80" class="s-muted">says 2:27</text>
+              <text x="330" y="64">"6 min"</text><text x="330" y="80" class="s-muted">says 2:29</text>
+              <text x="400" y="34">"1 min"</text><text x="400" y="50" class="s-muted">says 2:30</text>
+            </g>
+            <line x1="430" y1="96" x2="430" y2="132" class="st-late" stroke-width="3"/>
+            <text x="440" y="104" class="s-late" font-size="12" font-weight="700">bus really came 2:31</text>
+            <text x="30" y="176" class="s-muted" font-size="11">Each snapshot is graded: 2:25 was 6 min off, 2:27 was 4 off, 2:29 was 2 off, 2:30 was 1 off.</text>
+          </svg>
+        </div>
+      </figure>
+      <div class="words">
+        <p>For each bus and each timepoint ahead of it, the app saves BCT's guess once in each of five windows: <strong>20–30, 10–20, 5–10, 2–5 and 0–2 minutes</strong> before the bus is due, timed from when BCT published the feed. When GPS sees the bus reach the stop (its arrival, since BCT predicts arrivals), each saved guess is graded:</p>
+        <ul class="plain">
+          <li><div><strong>Accurate:</strong> the bus came no more than 1 minute before the guess, or 3 minutes after.</div></li>
+          <li><div><strong>Bus came early:</strong> more than 1 minute before the guess. Riders trusting the countdown miss the bus, so this is the outcome to watch.</div></li>
+          <li><div><strong>Bus came late:</strong> more than 3 minutes after the guess.</div></li>
+          <li><div><strong>Bus never came:</strong> BCT canceled the trip after making the guess, and GPS never saw a bus on it while the app was recording. It counts as a miss. If a bus did run and GPS just lost it, nobody knows, so that guess isn't counted at all.</div></li>
+        </ul>
+        <p>A guess that is exactly the timetable time carries no live information. It's counted separately and not graded, so the score reflects BCT's live predictions only.</p>
+      </div>
+    </div>
+    <div class="pair">
+      <figure class="figure">
+        <span class="example">Example numbers</span>
+        <div class="mock">
+          <div class="m-head"><h4>Prediction accuracy</h4><span class="m-btn">CSV</span></div>
+          <div class="legend"><span><span class="sw c-early"></span>Bus came early</span><span><span class="sw c-ok"></span>Accurate</span><span><span class="sw c-late"></span>Bus came late</span><span><span class="sw c-never"></span>Bus never came</span></div>
+          <div class="m-sub"><span class="n sm">1</span>By how far ahead the prediction was made</div>
+          <div class="srow"><span class="lbl">0–2 min</span><span class="sbar"><span class="c-early" style="flex:4"></span><span class="c-ok" style="flex:91"></span><span class="c-late" style="flex:5"></span></span><span class="pct">91%</span></div>
+          <div class="srow"><span class="lbl">2–5 min</span><span class="sbar"><span class="c-early" style="flex:7"></span><span class="c-ok" style="flex:82"></span><span class="c-late" style="flex:10"></span><span class="c-never" style="flex:1"></span></span><span class="pct">82%</span></div>
+          <div class="srow"><span class="lbl">5–10 min</span><span class="sbar"><span class="c-early" style="flex:11"></span><span class="c-ok" style="flex:66"></span><span class="c-late" style="flex:21"></span><span class="c-never" style="flex:2"></span></span><span class="pct">66%</span></div>
+          <div class="srow"><span class="lbl">10–20 min</span><span class="sbar"><span class="c-early" style="flex:14"></span><span class="c-ok" style="flex:48"></span><span class="c-late" style="flex:36"></span><span class="c-never" style="flex:2"></span></span><span class="pct">48%</span></div>
+          <div class="srow"><span class="lbl">20–30 min</span><span class="sbar"><span class="c-early" style="flex:16"></span><span class="c-ok" style="flex:37"></span><span class="c-late" style="flex:44"></span><span class="c-never" style="flex:3"></span></span><span class="pct">37%</span></div>
+          <div class="m-sub"><span class="n sm">2</span>By route</div>
+          <div class="tablewrap"><table class="m">
+            <thead><tr><th>Route</th><th class="num">Accurate</th><th class="num">5–10 min</th><th class="num">Bus early</th><th class="num">Never came</th><th class="num">Avg miss</th><th class="num">Predictions</th></tr></thead>
+            <tbody><tr><td><span class="badge" style="background:#F16477">18</span></td><td class="num">58%</td><td class="num">61%</td><td class="num">12%</td><td class="num">9</td><td class="num">3.1 min</td><td class="num">1,840</td></tr></tbody>
+          </table></div>
+        </div>
+      </figure>
+      <div class="words">
+        <ol>
+          <li><span class="n">1</span><div><strong>One row per window.</strong> "10–20 min: 48%" means that of the guesses made 10 to 20 minutes ahead, 48% were accurate. Guesses made further ahead are naturally worse; the question is by how much.</div></li>
+          <li><span class="n">2</span><div><strong>By route:</strong> overall accuracy, accuracy 5–10 minutes out (when most riders check), how often the bus came early, how many guesses were for buses that never came, the average miss (over buses that came), and how many guesses were graded.</div></li>
+        </ol>
+        <p>The note above the bars says how many guesses were for buses that never came, and how many were only the timetable and left out. Hovering a row gives its exact shares and average miss.</p>
+        <p class="muted">Only timepoints are graded, since that's where GPS timing is reliable. GPS fixes come about once a minute, so the moment a bus reached the stop is worked out between two fixes. The live Worker checks once a minute, so a short window (like 0–2 minutes) is sometimes skipped for a bus. Days recorded before Nov 3, 2026 were graded the old way: timetable-only guesses were included, buses that never came weren't counted, and some arrivals were timed on departure.</p>
+        <p>A headline above the bars gives accuracy over all distances ahead, with its ± range and against the goal (80%, a placeholder).</p>
+        <p><strong>Accurate by day</strong> follows the bars, so a bad day for the countdowns stands out.</p>
       </div>
     </div>
   </section>
 
   <!-- ===================================================== FEED -->
-  <section class="chapter" id="feed">
+  <section class="chapter" id="info-feed">
     <div class="chapter-head">
-      <span class="tabname"><span class="tabpill">Feed</span></span>
+      <span class="tabname"><span class="tabpill">Rider information</span></span>
       <h2>How good is BCT's live data?</h2>
       <p>Everything in this app depends on BCT's live feed. This tab measures its problems, and its CSV is meant as a report you could send to BCT.</p>
     </div>
@@ -1242,7 +1137,7 @@ table.m tr.hl td { background: var(--m-hover); }
 </main>
 
 <script>
-// Open the tab chapter named in the link (e.g. …#predictions).
+// Open the tab chapter named in the link (e.g. …#spacing).
 window.addEventListener('load', () => {
   const id = location.hash.slice(1);
   if (/^[a-z-]+$/.test(id)) document.getElementById(id)?.scrollIntoView();
